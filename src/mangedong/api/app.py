@@ -403,6 +403,8 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
   <a href="/ui/projects/{project.id}/color-review">上色审核</a>
   <a href="/ui/projects/{project.id}/clip-compare">片段对比</a>
   <a href="/ui/projects/{project.id}/client-review">客户审片</a>
+  <a href="/ui/projects/{project.id}/errors">错误日志</a>
+  <a href="/ui/projects/{project.id}/p2-admin">P2 管理</a>
 </section>
 """,
         )
@@ -502,6 +504,42 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
   <div class="card"><h2>Review Packages</h2><p>{len(packages)} packages</p></div>
   <div class="card"><h2>Revision Requests</h2><p>{len(revisions)} requests</p></div>
   <div class="card"><h2>Acceptance Records</h2><p>{len(acceptances)} records</p></div>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/errors", response_class=HTMLResponse)
+    def error_logs_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        errors = list_project_resources(db, project.id, "error_log")
+        return render_page(
+            "错误日志",
+            f"""
+<header><h1>错误日志</h1><p class="muted">{escape(project.name)}</p></header>
+<section class="grid">
+  <div class="card"><h2>Error Logs</h2><p>{len(errors)} logs</p></div>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/p2-admin", response_class=HTMLResponse)
+    def p2_admin_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        private_configs = list_team_resources(db, project.team_id, "private_deployment")
+        cloud_pools = list_team_resources(db, project.team_id, "comfyui_cloud_pool")
+        training_jobs = list_project_resources(db, project.id, "model_training_job")
+        advanced_exports = list_project_resources(db, project.id, "advanced_export")
+        return render_page(
+            "P2 管理",
+            f"""
+<header><h1>P2 管理</h1><p class="muted">{escape(project.name)}</p></header>
+<section class="grid">
+  <div class="card"><h2>Private Deployments</h2><p>{len(private_configs)} configs</p></div>
+  <div class="card"><h2>Cloud ComfyUI Pools</h2><p>{len(cloud_pools)} pools</p></div>
+  <div class="card"><h2>Model Training Jobs</h2><p>{len(training_jobs)} jobs</p></div>
+  <div class="card"><h2>Advanced Exports</h2><p>{len(advanced_exports)} packages</p></div>
 </section>
 """,
         )
@@ -724,6 +762,74 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             created_by_id=current_user.id,
         )
 
+    @api.post("/projects/{project_id}/imports/pdf", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    async def import_pdf_upload(
+        project_id: int,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+        file: UploadFile = File(...),
+        chapter_title: str = Form("Imported PDF Chapter"),
+        page_count: int = Form(1),
+    ) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        filename = safe_filename(file.filename or "manga.pdf")
+        upload_path = project_storage(request.app.state.storage_dir, project.id, "imports", filename)
+        upload_path.write_bytes(await file.read())
+        from PIL import Image, ImageDraw
+
+        chapter = Chapter(
+            team_id=project.team_id,
+            project_id=project.id,
+            title=chapter_title,
+            source_language=project.brief.get("target_languages", ["zh"])[0],
+            status="imported",
+            created_by_id=current_user.id,
+        )
+        db.add(chapter)
+        db.flush()
+        created_pages = []
+        for index in range(max(1, page_count)):
+            image = Image.new("RGB", (480, 680), "white")
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((24, 24, 456, 320), outline="black", width=4)
+            draw.rectangle((24, 360, 456, 656), outline="black", width=4)
+            draw.text((48, 48), f"PDF mock page {index + 1}", fill="black")
+            page_path = project_storage(request.app.state.storage_dir, project.id, "pages", f"pdf-{chapter.id}-{index + 1}.png")
+            image.save(page_path)
+            manga_page = MangaPage(
+                team_id=project.team_id,
+                project_id=project.id,
+                chapter_id=chapter.id,
+                page_number=index + 1,
+                image_uri=str(page_path),
+                created_by_id=current_user.id,
+            )
+            db.add(manga_page)
+            db.flush()
+            panel = Panel(
+                team_id=project.team_id,
+                project_id=project.id,
+                chapter_id=chapter.id,
+                page_id=manga_page.id,
+                panel_index=1,
+                bbox={"x": 0, "y": 0, "width": image.width, "height": image.height},
+                created_by_id=current_user.id,
+            )
+            db.add(panel)
+            db.flush()
+            created_pages.append({"page_id": manga_page.id, "panel_id": panel.id, "image_uri": str(page_path)})
+        db.commit()
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="pdf_import",
+            status="succeeded",
+            data={"chapter_id": chapter.id, "page_count": len(created_pages), "pages": created_pages, "source_uri": str(upload_path)},
+            created_by_id=current_user.id,
+        )
+
     @api.post("/projects/{project_id}/chapters", response_model=ChapterRead, status_code=status.HTTP_201_CREATED)
     def create_chapter(project_id: int, payload: ChapterCreate, current_user: CurrentUser, db: DbSession) -> Chapter:
         project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
@@ -806,6 +912,25 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             raise HTTPException(status_code=404, detail="Page not found.")
         require_project_access(db, current_user.id, page.project_id)
         return list(db.scalars(select(Panel).where(Panel.page_id == page_id).order_by(Panel.panel_index.asc())))
+
+    @api.patch("/panels/{panel_id}/manual-correction", response_model=PanelRead)
+    def correct_panel(panel_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> Panel:
+        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        if "bbox" in payload.data:
+            panel.bbox = payload.data["bbox"]
+        panel.status = payload.data.get("status", "manually_corrected")
+        db.commit()
+        db.refresh(panel)
+        create_resource(
+            db,
+            team_id=panel.team_id,
+            project_id=panel.project_id,
+            resource_type="panel_correction",
+            status="applied",
+            data={"panel_id": panel.id, "bbox": panel.bbox},
+            created_by_id=current_user.id,
+        )
+        return panel
 
     @api.post("/projects/{project_id}/work-items", response_model=WorkItemRead, status_code=status.HTTP_201_CREATED)
     def create_work_item(project_id: int, payload: WorkItemCreate, current_user: CurrentUser, db: DbSession) -> WorkItem:
@@ -938,6 +1063,32 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             created_by_id=current_user.id,
         )
 
+    @api.post("/teams/{team_id}/private-deployments", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_private_deployment_config(team_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        return create_resource(
+            db,
+            team_id=team_id,
+            project_id=None,
+            resource_type="private_deployment",
+            status="planned",
+            data={"deployment_mode": payload.data.get("deployment_mode", "single_tenant"), **payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/teams/{team_id}/comfyui/cloud-pools", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_comfyui_cloud_pool(team_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        return create_resource(
+            db,
+            team_id=team_id,
+            project_id=None,
+            resource_type="comfyui_cloud_pool",
+            status="mock_ready",
+            data={"gpu_profile": payload.data.get("gpu_profile", "mock-gpu"), "max_instances": payload.data.get("max_instances", 1)},
+            created_by_id=current_user.id,
+        )
+
     @api.post("/comfyui/instances/{instance_id}/health-check", response_model=ProductionResourceRead)
     def check_comfyui_instance(instance_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         instance = get_resource(db, instance_id, "comfyui_instance")
@@ -998,6 +1149,16 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         db.refresh(workflow)
         return workflow
 
+    @api.patch("/workflows/{workflow_id}/canvas", response_model=ProductionResourceRead)
+    def update_workflow_canvas(workflow_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        workflow = get_resource(db, workflow_id, "workflow")
+        require_project_access(db, current_user.id, workflow.project_id or 0, PROJECT_WRITE_ROLES)
+        workflow.data = {**workflow.data, "canvas": payload.data}
+        workflow.status = "canvas_updated"
+        db.commit()
+        db.refresh(workflow)
+        return workflow
+
     @api.get("/projects/{project_id}/workflows", response_model=list[ProductionResourceRead])
     def list_workflows(project_id: int, current_user: CurrentUser, db: DbSession) -> list[ProductionResource]:
         require_project_access(db, current_user.id, project_id)
@@ -1041,6 +1202,36 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             resource_type="character",
             status="draft",
             data=payload.data,
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/color-profiles", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_color_profile(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="color_profile",
+            status="approved",
+            data=payload.data,
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/color-strategies/apply", response_model=ProductionResourceRead)
+    def apply_color_strategy(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="color_strategy",
+            status="applied",
+            data={
+                "scope": payload.data.get("scope", "project"),
+                "reference_priority": payload.data.get("reference_priority", ["character_sheet", "approved_profile", "colored_page"]),
+                "conflict_policy": payload.data.get("conflict_policy", "require_confirmation"),
+            },
             created_by_id=current_user.id,
         )
 
@@ -1290,6 +1481,28 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         db.refresh(timeline)
         return timeline
 
+    @api.post("/timelines/{timeline_id}/tracks", response_model=ProductionResourceRead)
+    def add_timeline_track(timeline_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        timeline = get_resource(db, timeline_id, "timeline")
+        require_project_access(db, current_user.id, timeline.project_id or 0, PROJECT_WRITE_ROLES)
+        tracks = [*timeline.data.get("tracks", []), payload.data]
+        timeline.data = {**timeline.data, "tracks": tracks}
+        timeline.status = "advanced_timeline"
+        db.commit()
+        db.refresh(timeline)
+        return timeline
+
+    @api.post("/timelines/{timeline_id}/keyframes", response_model=ProductionResourceRead)
+    def add_timeline_keyframe(timeline_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        timeline = get_resource(db, timeline_id, "timeline")
+        require_project_access(db, current_user.id, timeline.project_id or 0, PROJECT_WRITE_ROLES)
+        keyframes = [*timeline.data.get("keyframes", []), payload.data]
+        timeline.data = {**timeline.data, "keyframes": keyframes}
+        timeline.status = "advanced_timeline"
+        db.commit()
+        db.refresh(timeline)
+        return timeline
+
     @api.post("/shots/{shot_id}/dialogue-lines", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_dialogue_line(shot_id: int, payload: DialogueLineCreate, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         shot = get_resource(db, shot_id, "shot")
@@ -1349,6 +1562,23 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             created_by_id=current_user.id,
         )
 
+    @api.post("/dialogue-lines/{dialogue_line_id}/translations", response_model=ProductionResourceRead)
+    def translate_dialogue_line(dialogue_line_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        dialogue = get_resource(db, dialogue_line_id, "dialogue_line")
+        require_project_access(db, current_user.id, dialogue.project_id or 0, PROJECT_WRITE_ROLES)
+        source_text = str(dialogue.data.get("edited_text") or dialogue.data.get("ocr_text") or "")
+        target_languages = payload.data.get("target_languages", ["zh", "ja", "en"])
+        translations = {language: f"[{language}] {source_text}" for language in target_languages}
+        return create_resource(
+            db,
+            team_id=dialogue.team_id,
+            project_id=dialogue.project_id,
+            resource_type="subtitle_translation",
+            status="completed",
+            data={"dialogue_line_id": dialogue.id, "translations": translations},
+            created_by_id=current_user.id,
+        )
+
     @api.post("/projects/{project_id}/music-cues", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_music_cue(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
@@ -1374,6 +1604,32 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             resource_type="audio_mix",
             status="rendered",
             data={"mix_uri": str(mix_path), **payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/collaboration/sessions", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_collaboration_session(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="collaboration_session",
+            status="active",
+            data={"participants": payload.data.get("participants", [current_user.id]), **payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/model-training-jobs", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_model_training_job(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, {"owner", "admin", "producer"})
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="model_training_job",
+            status="queued",
+            data={"training_type": payload.data.get("training_type", "character_lora"), "mock": True, **payload.data},
             created_by_id=current_user.id,
         )
 
@@ -1461,6 +1717,24 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             created_by_id=current_user.id,
         )
 
+    @api.post("/projects/{project_id}/error-logs", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_error_log(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="error_log",
+            status=payload.data.get("severity", "info"),
+            data=payload.data,
+            created_by_id=current_user.id,
+        )
+
+    @api.get("/projects/{project_id}/error-logs", response_model=list[ProductionResourceRead])
+    def list_error_logs(project_id: int, current_user: CurrentUser, db: DbSession) -> list[ProductionResource]:
+        require_project_access(db, current_user.id, project_id)
+        return list_project_resources(db, project_id, "error_log")
+
     @api.post("/projects/{project_id}/exports", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_export(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         project = require_project_access(db, current_user.id, project_id, {"owner", "admin", "producer"})
@@ -1504,6 +1778,28 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         db.commit()
         db.refresh(export)
         return export
+
+    @api.post("/exports/{export_id}/advanced-format", response_model=ProductionResourceRead)
+    def create_advanced_export_format(export_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        export = get_resource(db, export_id, "export")
+        require_project_access(db, current_user.id, export.project_id or 0, {"owner", "admin", "producer"})
+        package_path = project_storage(
+            request.app.state.storage_dir,
+            export.project_id or 0,
+            "exports",
+            f"export-{export.id}-{safe_filename(str(payload.data.get('format', 'prores')))}.zip",
+        )
+        manifest = {"export_id": export.id, "advanced_format": payload.data.get("format", "prores"), "settings": payload.data}
+        write_export_package(package_path, manifest)
+        return create_resource(
+            db,
+            team_id=export.team_id,
+            project_id=export.project_id,
+            resource_type="advanced_export",
+            status="generated",
+            data={"package_uri": str(package_path), **manifest},
+            created_by_id=current_user.id,
+        )
 
     return api
 

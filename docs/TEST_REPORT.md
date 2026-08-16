@@ -4,7 +4,7 @@
 
 - 运行命令：`python3 -m pytest`
 - 测试范围：CLI 管道、Web SaaS API、Web 工作台页面
-- 测试结果：11 passed
+- 测试结果：12 passed
 
 ## 自动化测试覆盖
 
@@ -125,18 +125,42 @@
 - 片段对比页面渲染
 - 客户审片页面渲染
 
+### 6. P1/P2 全量 scaffold 测试
+
+文件：`tests/test_p1_p2.py`
+
+覆盖内容：
+
+- PDF mock 导入，并生成本地页面 PNG
+- 分格手动修正
+- 高级角色色彩档案
+- 色彩策略应用
+- 多语言字幕翻译
+- 错误日志创建
+- 错误日志页面渲染
+- 私有化部署配置
+- 云 ComfyUI 池
+- workflow 画布编辑
+- 专业时间线 track
+- 专业时间线 keyframe
+- 协作会话
+- 模型训练任务
+- 高级导出格式，并生成本地 ZIP
+- P2 管理页面渲染
+
 ## 最近一次测试输出
 
 ```text
-collected 11 items
+collected 12 items
 
-tests/test_api.py ....                                                   [ 36%]
-tests/test_enhancements.py .                                             [ 45%]
-tests/test_pages.py ..                                                   [ 63%]
-tests/test_pipeline.py ...                                               [ 90%]
+tests/test_api.py ....                                                   [ 33%]
+tests/test_enhancements.py .                                             [ 41%]
+tests/test_p1_p2.py .                                                    [ 50%]
+tests/test_pages.py ..                                                   [ 66%]
+tests/test_pipeline.py ...                                               [ 91%]
 tests/test_prd_flow.py .                                                 [100%]
 
-11 passed
+12 passed
 ```
 
 ## 当前测试结论
@@ -145,6 +169,7 @@ tests/test_prd_flow.py .                                                 [100%]
 - 本轮新增 Web 工作台页面通过页面自动化测试。
 - PRD P0 主链路通过端到端 API + 页面自动化测试。
 - 增强项通过 API + 页面自动化测试。
+- P1/P2 scaffold 通过 API + 页面自动化测试。
 - 外部接入使用 mock，但内部功能会生成真实本地产物文件。
 - 既有漫画转动漫 CLI 管道未出现回归。
 - 当前测试不只是接口测试，已包含对应 Web 页面渲染自动化测试。

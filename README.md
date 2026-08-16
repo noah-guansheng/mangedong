@@ -81,6 +81,8 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `GET /ui/projects/{project_id}/color-review`
 - `GET /ui/projects/{project_id}/clip-compare`
 - `GET /ui/projects/{project_id}/client-review`
+- `GET /ui/projects/{project_id}/errors`
+- `GET /ui/projects/{project_id}/p2-admin`
 - `POST /auth/register`
 - `POST /auth/login`
 - `GET /auth/me`
@@ -95,12 +97,14 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `GET /projects/{project_id}/assets`
 - `POST /projects/{project_id}/uploads`
 - `POST /projects/{project_id}/imports/manga`
+- `POST /projects/{project_id}/imports/pdf`
 - `POST /projects/{project_id}/chapters`
 - `GET /projects/{project_id}/chapters`
 - `POST /chapters/{chapter_id}/pages`
 - `GET /chapters/{chapter_id}/pages`
 - `POST /pages/{page_id}/panels`
 - `GET /pages/{page_id}/panels`
+- `PATCH /panels/{panel_id}/manual-correction`
 - `POST /projects/{project_id}/work-items`
 - `GET /projects/{project_id}/work-items`
 - `POST /projects/{project_id}/production-gates`
@@ -119,6 +123,8 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `POST /projects/{project_id}/storage/presign`
 - `POST /projects/{project_id}/references`
 - `POST /projects/{project_id}/characters`
+- `POST /projects/{project_id}/color-profiles`
+- `POST /projects/{project_id}/color-strategies/apply`
 - `POST /panels/{panel_id}/ocr`
 - `POST /panels/{panel_id}/analyze`
 - `POST /panels/{panel_id}/colorize`
@@ -134,16 +140,27 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `POST /shots/{shot_id}/dialogue-lines`
 - `POST /dialogue-lines/{dialogue_line_id}/voice`
 - `POST /dialogue-lines/{dialogue_line_id}/subtitle`
+- `POST /dialogue-lines/{dialogue_line_id}/translations`
 - `POST /projects/{project_id}/music-cues`
 - `POST /projects/{project_id}/audio-mixes`
+- `POST /projects/{project_id}/collaboration/sessions`
+- `POST /projects/{project_id}/model-training-jobs`
 - `POST /review-comments`
 - `POST /projects/{project_id}/review-packages`
 - `POST /review-packages/{review_package_id}/revision-requests`
 - `POST /review-packages/{review_package_id}/acceptance-records`
 - `POST /projects/{project_id}/qc-reports`
+- `POST /projects/{project_id}/error-logs`
+- `GET /projects/{project_id}/error-logs`
 - `POST /projects/{project_id}/exports`
 - `POST /exports/{export_id}/preflight`
 - `POST /exports/{export_id}/freeze`
+- `POST /exports/{export_id}/advanced-format`
+- `POST /teams/{team_id}/private-deployments`
+- `POST /teams/{team_id}/comfyui/cloud-pools`
+- `PATCH /workflows/{workflow_id}/canvas`
+- `POST /timelines/{timeline_id}/tracks`
+- `POST /timelines/{timeline_id}/keyframes`
 
 ## 后续扩展方向
 
