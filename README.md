@@ -75,6 +75,8 @@ MANGEDONG_SECRET_KEY="change-me"
 - `GET /ui/dashboard`
 - `GET /ui/projects?team_id=...`
 - `GET /ui/projects/{project_id}/production`
+- `GET /ui/projects/{project_id}/ai-workflows`
+- `GET /ui/projects/{project_id}/review-export`
 - `POST /auth/register`
 - `POST /auth/login`
 - `GET /auth/me`
@@ -100,6 +102,34 @@ MANGEDONG_SECRET_KEY="change-me"
 - `POST /production-gates/{gate_id}/approve`
 - `POST /projects/{project_id}/ai-jobs`
 - `GET /projects/{project_id}/ai-jobs`
+- `POST /teams/{team_id}/ai-providers`
+- `GET /teams/{team_id}/ai-providers`
+- `POST /teams/{team_id}/comfyui/instances`
+- `POST /comfyui/instances/{instance_id}/health-check`
+- `POST /projects/{project_id}/workflows`
+- `POST /workflows/{workflow_id}/test-run`
+- `GET /projects/{project_id}/workflows`
+- `POST /projects/{project_id}/references`
+- `POST /projects/{project_id}/characters`
+- `POST /panels/{panel_id}/ocr`
+- `POST /panels/{panel_id}/analyze`
+- `POST /panels/{panel_id}/colorize`
+- `POST /projects/{project_id}/batch-colorize`
+- `POST /panels/{panel_id}/generate-video`
+- `POST /projects/{project_id}/shots`
+- `POST /shots/{shot_id}/generate-animatic`
+- `POST /projects/{project_id}/timelines`
+- `POST /timelines/{timeline_id}/items`
+- `POST /shots/{shot_id}/dialogue-lines`
+- `POST /dialogue-lines/{dialogue_line_id}/voice`
+- `POST /dialogue-lines/{dialogue_line_id}/subtitle`
+- `POST /projects/{project_id}/music-cues`
+- `POST /projects/{project_id}/audio-mixes`
+- `POST /review-comments`
+- `POST /projects/{project_id}/qc-reports`
+- `POST /projects/{project_id}/exports`
+- `POST /exports/{export_id}/preflight`
+- `POST /exports/{export_id}/freeze`
 
 ## 后续扩展方向
 

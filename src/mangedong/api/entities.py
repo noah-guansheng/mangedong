@@ -169,3 +169,17 @@ class AIJob(Base):
     output_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ProductionResource(Base):
+    __tablename__ = "production_resources"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
+    resource_type: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="draft")
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

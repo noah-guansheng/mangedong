@@ -13,7 +13,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from mangedong.api.db import build_session_factory, init_db, session_scope
-from mangedong.api.entities import AIJob, Asset, Chapter, MangaPage, Panel, ProductionGate, Project, Team, TeamMember, User, WorkItem, utc_now
+from mangedong.api.entities import (
+    AIJob,
+    Asset,
+    Chapter,
+    MangaPage,
+    Panel,
+    ProductionGate,
+    ProductionResource,
+    Project,
+    Team,
+    TeamMember,
+    User,
+    WorkItem,
+    utc_now,
+)
 from mangedong.api.schemas import (
     AIJobCreate,
     AIJobRead,
@@ -21,22 +35,32 @@ from mangedong.api.schemas import (
     AssetRead,
     ChapterCreate,
     ChapterRead,
+    ComfyUIInstanceCreate,
+    DialogueLineCreate,
     PageCreate,
     PageRead,
     PanelCreate,
     PanelRead,
+    ProductionResourceRead,
     ProductionGateCreate,
     ProductionGateRead,
     ProjectCreate,
     ProjectRead,
+    ProviderCreate,
+    ResourcePayload,
+    ReviewCommentCreate,
+    ShotCreate,
     TeamCreate,
     TeamMemberCreate,
     TeamMemberRead,
     TeamRead,
+    TimelineCreate,
+    TimelineItemCreate,
     TokenResponse,
     UserCreate,
     UserLogin,
     UserRead,
+    WorkflowCreate,
     WorkItemCreate,
     WorkItemRead,
 )
@@ -102,6 +126,14 @@ def require_project_access(db: Session, user_id: int, project_id: int, allowed_r
     return project
 
 
+def require_panel_access(db: Session, user_id: int, panel_id: int, allowed_roles: set[str] | None = None) -> Panel:
+    panel = db.get(Panel, panel_id)
+    if panel is None:
+        raise HTTPException(status_code=404, detail="Panel not found.")
+    require_project_access(db, user_id, panel.project_id, allowed_roles)
+    return panel
+
+
 def member_response(member: TeamMember, user: User) -> TeamMemberRead:
     return TeamMemberRead(
         id=member.id,
@@ -112,6 +144,94 @@ def member_response(member: TeamMember, user: User) -> TeamMemberRead:
         role=member.role,  # type: ignore[arg-type]
         created_at=member.created_at,
     )
+
+
+def create_resource(
+    db: Session,
+    *,
+    team_id: int,
+    project_id: int | None,
+    resource_type: str,
+    status: str,
+    data: dict,
+    created_by_id: int,
+) -> ProductionResource:
+    resource = ProductionResource(
+        team_id=team_id,
+        project_id=project_id,
+        resource_type=resource_type,
+        status=status,
+        data=data,
+        created_by_id=created_by_id,
+    )
+    db.add(resource)
+    db.commit()
+    db.refresh(resource)
+    return resource
+
+
+def list_project_resources(db: Session, project_id: int, resource_type: str) -> list[ProductionResource]:
+    return list(
+        db.scalars(
+            select(ProductionResource)
+            .where(ProductionResource.project_id == project_id, ProductionResource.resource_type == resource_type)
+            .order_by(ProductionResource.created_at.desc())
+        )
+    )
+
+
+def list_team_resources(db: Session, team_id: int, resource_type: str) -> list[ProductionResource]:
+    return list(
+        db.scalars(
+            select(ProductionResource)
+            .where(ProductionResource.team_id == team_id, ProductionResource.resource_type == resource_type)
+            .order_by(ProductionResource.created_at.desc())
+        )
+    )
+
+
+def get_resource(db: Session, resource_id: int, resource_type: str | None = None) -> ProductionResource:
+    resource = db.get(ProductionResource, resource_id)
+    if resource is None or (resource_type is not None and resource.resource_type != resource_type):
+        raise HTTPException(status_code=404, detail="Resource not found.")
+    return resource
+
+
+def parse_workflow(workflow_json: dict, published_parameters: dict) -> dict:
+    if "nodes" in workflow_json:
+        node_count = len(workflow_json.get("nodes", []))
+        workflow_format = "ui"
+    else:
+        node_count = len(workflow_json)
+        workflow_format = "api"
+    detected_inputs = sorted(published_parameters.keys()) if published_parameters else []
+    return {
+        "format": workflow_format,
+        "node_count": node_count,
+        "published_parameter_keys": detected_inputs,
+        "production_ready_checks": {
+            "json_valid": True,
+            "output_bound": bool(published_parameters.get("output") or node_count > 0),
+            "test_run_required": True,
+        },
+    }
+
+
+def resolve_review_project_id(db: Session, object_type: str, object_id: int) -> int:
+    if object_type == "project":
+        project = db.get(Project, object_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Review target not found.")
+        return project.id
+    if object_type == "panel":
+        panel = db.get(Panel, object_id)
+        if panel is None:
+            raise HTTPException(status_code=404, detail="Review target not found.")
+        return panel.project_id
+    resource = db.get(ProductionResource, object_id)
+    if resource is None or resource.project_id is None:
+        raise HTTPException(status_code=404, detail="Review target not found.")
+    return resource.project_id
 
 
 def current_user_from_cookie(request: Request, db: Session) -> User | None:
@@ -267,6 +387,55 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
   <div class="card"><h2>Work Items</h2><p>{len(work_items)} open items</p></div>
   <div class="card"><h2>Production Gates</h2><p>{len(gates)} gates</p></div>
   <div class="card"><h2>AI Jobs</h2><p>{len(jobs)} jobs</p></div>
+</section>
+<section>
+  <h2>工作台入口</h2>
+  <a href="/ui/projects/{project.id}/ai-workflows">AI Workflow Center</a>
+  <a href="/ui/projects/{project.id}/review-export">审核与导出</a>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/ai-workflows", response_class=HTMLResponse)
+    def ai_workflows_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        providers = list_team_resources(db, project.team_id, "ai_provider")
+        comfyui_instances = list_team_resources(db, project.team_id, "comfyui_instance")
+        workflows = list_project_resources(db, project.id, "workflow")
+        return render_page(
+            "AI Workflow Center",
+            f"""
+<header>
+  <h1>AI Workflow Center</h1>
+  <p class="muted">{escape(project.name)}</p>
+</header>
+<section class="grid">
+  <div class="card"><h2>AI Providers</h2><p>{len(providers)} providers</p></div>
+  <div class="card"><h2>ComfyUI Instances</h2><p>{len(comfyui_instances)} instances</p></div>
+  <div class="card"><h2>Workflow Templates</h2><p>{len(workflows)} workflows</p></div>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/review-export", response_class=HTMLResponse)
+    def review_export_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        comments = list_project_resources(db, project.id, "review_comment")
+        qc_reports = list_project_resources(db, project.id, "qc_report")
+        exports = list_project_resources(db, project.id, "export")
+        return render_page(
+            "审核与导出",
+            f"""
+<header>
+  <h1>审核与导出</h1>
+  <p class="muted">{escape(project.name)}</p>
+</header>
+<section class="grid">
+  <div class="card"><h2>Review Comments</h2><p>{len(comments)} comments</p></div>
+  <div class="card"><h2>QC Reports</h2><p>{len(qc_reports)} reports</p></div>
+  <div class="card"><h2>Export Packages</h2><p>{len(exports)} exports</p></div>
 </section>
 """,
         )
@@ -571,6 +740,388 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
     def list_ai_jobs(project_id: int, current_user: CurrentUser, db: DbSession) -> list[AIJob]:
         require_project_access(db, current_user.id, project_id)
         return list(db.scalars(select(AIJob).where(AIJob.project_id == project_id).order_by(AIJob.created_at.desc())))
+
+    @api.post("/teams/{team_id}/ai-providers", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_ai_provider(
+        team_id: int,
+        payload: ProviderCreate,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        return create_resource(
+            db,
+            team_id=team_id,
+            project_id=None,
+            resource_type="ai_provider",
+            status="active",
+            data=payload.model_dump(mode="json"),
+            created_by_id=current_user.id,
+        )
+
+    @api.get("/teams/{team_id}/ai-providers", response_model=list[ProductionResourceRead])
+    def list_ai_providers(team_id: int, current_user: CurrentUser, db: DbSession) -> list[ProductionResource]:
+        require_team_membership(db, current_user.id, team_id)
+        return list_team_resources(db, team_id, "ai_provider")
+
+    @api.post("/teams/{team_id}/comfyui/instances", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_comfyui_instance(
+        team_id: int,
+        payload: ComfyUIInstanceCreate,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        instance_data = payload.model_dump(mode="json")
+        instance_data["health"] = {"status": "unchecked"}
+        return create_resource(
+            db,
+            team_id=team_id,
+            project_id=None,
+            resource_type="comfyui_instance",
+            status="configured",
+            data=instance_data,
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/comfyui/instances/{instance_id}/health-check", response_model=ProductionResourceRead)
+    def check_comfyui_instance(instance_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        instance = get_resource(db, instance_id, "comfyui_instance")
+        require_team_role(db, current_user.id, instance.team_id, MANAGE_TEAM_ROLES)
+        instance.data = {**instance.data, "health": {"status": "ok", "checked_at": utc_now().isoformat()}}
+        instance.status = "healthy"
+        db.commit()
+        db.refresh(instance)
+        return instance
+
+    @api.post("/projects/{project_id}/workflows", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_workflow(
+        project_id: int,
+        payload: WorkflowCreate,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        parsed = parse_workflow(payload.workflow_json, payload.published_parameters)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="workflow",
+            status="parsed",
+            data={**payload.model_dump(mode="json"), "parsed": parsed},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/workflows/{workflow_id}/test-run", response_model=ProductionResourceRead)
+    def test_run_workflow(workflow_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        workflow = get_resource(db, workflow_id, "workflow")
+        if workflow.project_id is None:
+            raise HTTPException(status_code=400, detail="Workflow is not project scoped.")
+        require_project_access(db, current_user.id, workflow.project_id, PROJECT_WRITE_ROLES)
+        workflow.status = "production_ready"
+        workflow.data = {
+            **workflow.data,
+            "test_run": {"status": "succeeded", "checked_at": utc_now().isoformat(), "output_type": "mock_asset"},
+        }
+        db.commit()
+        db.refresh(workflow)
+        return workflow
+
+    @api.get("/projects/{project_id}/workflows", response_model=list[ProductionResourceRead])
+    def list_workflows(project_id: int, current_user: CurrentUser, db: DbSession) -> list[ProductionResource]:
+        require_project_access(db, current_user.id, project_id)
+        return list_project_resources(db, project_id, "workflow")
+
+    @api.post("/projects/{project_id}/references", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_reference(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="reference_image",
+            status="uploaded",
+            data=payload.data,
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/characters", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_character(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="character",
+            status="draft",
+            data=payload.data,
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/panels/{panel_id}/ocr", response_model=ProductionResourceRead)
+    def run_panel_ocr(panel_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=panel.team_id,
+            project_id=panel.project_id,
+            resource_type="dialogue_line",
+            status="ocr_draft",
+            data={"panel_id": panel.id, "ocr_text": "示例台词", "source_language": "zh", "confidence": 0.82},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/panels/{panel_id}/analyze", response_model=ProductionResourceRead)
+    def analyze_panel(panel_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=panel.team_id,
+            project_id=panel.project_id,
+            resource_type="analysis",
+            status="succeeded",
+            data={
+                "panel_id": panel.id,
+                "scene": "cinematic manga panel",
+                "action": "character reacts",
+                "camera": "slow zoom in",
+                "prompt": "anime cinematic shot, clean line art, expressive acting",
+            },
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/panels/{panel_id}/colorize", response_model=ProductionResourceRead)
+    def colorize_panel(panel_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=panel.team_id,
+            project_id=panel.project_id,
+            resource_type="colorization",
+            status="succeeded",
+            data={"panel_id": panel.id, "palette": payload.data.get("palette", "cel"), "output_asset_uri": f"mock://colorized/{panel.id}.png"},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/batch-colorize", response_model=ProductionResourceRead)
+    def batch_colorize(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="batch_colorization",
+            status="queued",
+            data={"scope": payload.data.get("scope", "project"), "estimated_items": payload.data.get("estimated_items", 0)},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/panels/{panel_id}/generate-video", response_model=ProductionResourceRead)
+    def generate_panel_video(panel_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=panel.team_id,
+            project_id=panel.project_id,
+            resource_type="video_clip",
+            status="generated",
+            data={
+                "panel_id": panel.id,
+                "provider": payload.data.get("provider", "mock_video"),
+                "output_asset_uri": f"mock://video-clips/{panel.id}.mp4",
+                "duration_seconds": payload.data.get("duration_seconds", 3),
+            },
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/shots", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_shot(project_id: int, payload: ShotCreate, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="shot",
+            status="draft",
+            data=payload.model_dump(mode="json"),
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/shots/{shot_id}/generate-animatic", response_model=ProductionResourceRead)
+    def generate_animatic(shot_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        shot = get_resource(db, shot_id, "shot")
+        require_project_access(db, current_user.id, shot.project_id or 0, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=shot.team_id,
+            project_id=shot.project_id,
+            resource_type="animatic",
+            status="generated",
+            data={"shot_id": shot.id, "preview_uri": f"mock://animatics/{shot.id}.mp4"},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/timelines", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_timeline(project_id: int, payload: TimelineCreate, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="timeline",
+            status="draft",
+            data={"name": payload.name, "items": []},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/timelines/{timeline_id}/items", response_model=ProductionResourceRead)
+    def add_timeline_item(timeline_id: int, payload: TimelineItemCreate, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        timeline = get_resource(db, timeline_id, "timeline")
+        require_project_access(db, current_user.id, timeline.project_id or 0, PROJECT_WRITE_ROLES)
+        items = [*timeline.data.get("items", []), payload.model_dump(mode="json")]
+        timeline.data = {**timeline.data, "items": items}
+        db.commit()
+        db.refresh(timeline)
+        return timeline
+
+    @api.post("/shots/{shot_id}/dialogue-lines", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_dialogue_line(shot_id: int, payload: DialogueLineCreate, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        shot = get_resource(db, shot_id, "shot")
+        require_project_access(db, current_user.id, shot.project_id or 0, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=shot.team_id,
+            project_id=shot.project_id,
+            resource_type="dialogue_line",
+            status="approved",
+            data={**payload.model_dump(mode="json"), "shot_id": shot.id},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/dialogue-lines/{dialogue_line_id}/voice", response_model=ProductionResourceRead)
+    def generate_voice_line(dialogue_line_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        dialogue = get_resource(db, dialogue_line_id, "dialogue_line")
+        require_project_access(db, current_user.id, dialogue.project_id or 0, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=dialogue.team_id,
+            project_id=dialogue.project_id,
+            resource_type="voice_line",
+            status="generated",
+            data={"dialogue_line_id": dialogue.id, "voice": payload.data.get("voice", "default"), "audio_uri": f"mock://voice/{dialogue.id}.wav"},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/dialogue-lines/{dialogue_line_id}/subtitle", response_model=ProductionResourceRead)
+    def create_subtitle_cue(dialogue_line_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        dialogue = get_resource(db, dialogue_line_id, "dialogue_line")
+        require_project_access(db, current_user.id, dialogue.project_id or 0, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=dialogue.team_id,
+            project_id=dialogue.project_id,
+            resource_type="subtitle_cue",
+            status="approved",
+            data={"dialogue_line_id": dialogue.id, **payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/music-cues", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_music_cue(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="music_cue",
+            status="approved",
+            data=payload.data,
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/audio-mixes", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_audio_mix(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="audio_mix",
+            status="rendered",
+            data={"mix_uri": f"mock://audio-mixes/{project.id}.wav", **payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/review-comments", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_review_comment(payload: ReviewCommentCreate, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project_id = resolve_review_project_id(db, payload.object_type, payload.object_id)
+        project = require_project_access(db, current_user.id, project_id)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="review_comment",
+            status="open",
+            data=payload.model_dump(mode="json"),
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/qc-reports", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_qc_report(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, {"owner", "admin", "producer", "reviewer"})
+        checks = payload.data.get("checks", {"video_playable": True, "manifest_complete": True, "authorized": True})
+        passed = all(bool(value) for value in checks.values())
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="qc_report",
+            status="passed" if passed else "failed",
+            data={"checks": checks},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/projects/{project_id}/exports", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_export(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, {"owner", "admin", "producer"})
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="export",
+            status="draft",
+            data={"settings": payload.data, "manifest": {}},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/exports/{export_id}/preflight", response_model=ProductionResourceRead)
+    def preflight_export(export_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        export = get_resource(db, export_id, "export")
+        require_project_access(db, current_user.id, export.project_id or 0, {"owner", "admin", "producer"})
+        export.status = "qc_passed"
+        export.data = {
+            **export.data,
+            "manifest": {
+                "export_id": export.id,
+                "files": [{"path": "deliverables/final.mp4", "type": "video", "sha256": "mock"}],
+                "generated_at": utc_now().isoformat(),
+            },
+        }
+        db.commit()
+        db.refresh(export)
+        return export
+
+    @api.post("/exports/{export_id}/freeze", response_model=ProductionResourceRead)
+    def freeze_export(export_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        export = get_resource(db, export_id, "export")
+        require_project_access(db, current_user.id, export.project_id or 0, {"owner", "admin", "producer"})
+        if export.status != "qc_passed":
+            raise HTTPException(status_code=409, detail="Export must pass preflight before freeze.")
+        export.status = "frozen"
+        db.commit()
+        db.refresh(export)
+        return export
 
     return api
 

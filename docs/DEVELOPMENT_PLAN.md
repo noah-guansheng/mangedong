@@ -29,6 +29,17 @@
 - 轻量 Web 工作台页面
 - 页面自动化测试
 - API 自动化测试
+- AI Provider 配置模型和接口
+- ComfyUI 实例配置和健康检查
+- Workflow 上传、解析、Published Parameters 和测试运行
+- 参考图和角色资源
+- OCR、AI 分析、参考上色、批量上色占位任务
+- 单分格视频生成占位任务
+- Shot List 和 Animatic
+- 最小装配时间线
+- DialogueLine、VoiceLine、SubtitleCue、MusicCue、AudioMix
+- ReviewComment、QCReport、Export、Preflight、Freeze
+- 完整 PRD P0 链路自动化测试
 
 ### 当前 RBAC
 
@@ -39,10 +50,10 @@
 
 ### 下一步建议
 
-1. 增加真实文件上传和对象存储抽象。
-2. 将 CBZ/ZIP 导入接入后端导入任务。
-3. 增加 ComfyUI 实例配置和健康检查。
-4. 增加 workflow 上传、解析和 Published Parameters。
+1. 将占位 Provider 替换为真实第三方 AI API。
+2. 将 ComfyUI 健康检查和 test-run 替换为真实远程调用。
+3. 增加真实文件上传和对象存储抽象。
+4. 将 CBZ/ZIP 导入接入后端导入任务。
 5. 增加任务执行 worker。
 
 ## Milestone 2：项目、导入和素材库
@@ -65,52 +76,66 @@
 
 ## Milestone 3：ComfyUI Workflow Center
 
-建议开发内容：
+当前进度：
 
 - ComfyUI 实例配置
 - 健康检查
 - Workflow JSON 上传
 - API/UI workflow 解析
 - Published Parameters
-- 节点输入编辑
-- workflow 兼容性检查
 - 测试运行
+
+待开发内容：
+
+- 真实节点输入编辑 UI
+- 真实 workflow 兼容性检查
+- 真实远程 ComfyUI `/prompt`、WebSocket、`/history` 集成
 
 ## Milestone 4：参考上色与批量任务
 
-建议开发内容：
+当前进度：
 
 - 参考图上传
 - 角色档案
-- 色彩档案
 - 批量参考上色任务
-- 局部修正任务
-- 上色版本对比
+
+待开发内容：
+
+- 色彩档案细化
+- 真实局部修正任务
+- 上色版本对比 UI
 
 ## Milestone 5：Shot List、Animatic 和轻量时间线
 
-建议开发内容：
+当前进度：
 
 - Shot List
-- 一个 Panel 拆多个 Shot
-- 多个 Panel 合并一个 Shot
 - Animatic Preview
 - Timeline
 - TimelineItem
-- 片段 A/B 对比
+
+待开发内容：
+
+- 一个 Panel 拆多个 Shot 的高级 UI
+- 多个 Panel 合并一个 Shot 的高级 UI
+- 片段 A/B 对比 UI
 
 ## Milestone 6：音频、审核和商业导出
 
-建议开发内容：
+当前进度：
 
 - DialogueLine
-- Voice Bible
 - VoiceLine
 - SubtitleCue
 - MusicCue
 - AudioMix
 - QCReport
+- ExportManifest
+
+待开发内容：
+
+- Voice Bible 细化
 - ReviewPackage
 - RevisionRequest
 - AcceptanceRecord
-- ExportManifest
+- 真实音频混音和导出包文件生成

@@ -242,3 +242,77 @@ class AIJobRead(BaseModel):
     output_payload: dict[str, Any]
     created_by_id: int
     created_at: datetime
+
+
+class ProductionResourceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    team_id: int
+    project_id: int | None
+    resource_type: str
+    status: str
+    data: dict[str, Any]
+    created_by_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProviderCreate(BaseModel):
+    name: str = Field(min_length=1)
+    provider_type: Literal["third_party_api", "remote_comfyui", "local_model", "custom_http"]
+    capabilities: list[str] = Field(default_factory=list)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ComfyUIInstanceCreate(BaseModel):
+    name: str = Field(min_length=1)
+    base_url: str = Field(min_length=1)
+    auth_type: Literal["none", "bearer", "basic", "custom_header"] = "none"
+    max_concurrency: int = Field(default=1, ge=1)
+
+
+class WorkflowCreate(BaseModel):
+    name: str = Field(min_length=1)
+    workflow_type: Literal["colorize", "image_to_video", "first_last_frame_video", "upscale", "inpaint"]
+    workflow_json: dict[str, Any]
+    published_parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResourcePayload(BaseModel):
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShotCreate(BaseModel):
+    title: str = Field(min_length=1)
+    source_panel_ids: list[int] = Field(default_factory=list)
+    camera: str = "slow zoom in"
+    action: str = ""
+    duration_seconds: float = Field(default=3.0, gt=0)
+    prompt: str = ""
+
+
+class TimelineCreate(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class TimelineItemCreate(BaseModel):
+    item_type: Literal["video", "subtitle", "voice", "bgm"]
+    resource_id: int
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+
+class DialogueLineCreate(BaseModel):
+    speaker_id: str | None = None
+    line_type: Literal["dialogue", "narration", "sfx", "thought"] = "dialogue"
+    source_language: LanguageCode = "zh"
+    edited_text: str = Field(min_length=1)
+
+
+class ReviewCommentCreate(BaseModel):
+    object_type: str = Field(min_length=1)
+    object_id: int
+    category: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    severity: Literal["low", "medium", "high", "blocker"] = "medium"
