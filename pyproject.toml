@@ -26,9 +26,13 @@ dev = [
   "httpx2",
   "pytest",
 ]
+postgres = [
+  "psycopg[binary]",
+]
 
 [project.scripts]
 mangedong = "mangedong.cli:app"
+mangedong-worker = "mangedong.api.worker_main:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

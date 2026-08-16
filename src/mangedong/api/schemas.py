@@ -308,6 +308,7 @@ class ComfyUIInstanceCreate(BaseModel):
     token: str | None = None
     custom_header_name: str | None = None
     max_concurrency: int = Field(default=1, ge=1)
+    tunnel_url: str | None = None
 
 
 class WorkflowCreate(BaseModel):
@@ -354,3 +355,30 @@ class ReviewCommentCreate(BaseModel):
     category: str = Field(min_length=1)
     content: str = Field(min_length=1)
     severity: Literal["low", "medium", "high", "blocker"] = "medium"
+
+
+class SMTPConfig(BaseModel):
+    host: str = Field(min_length=1)
+    port: int = Field(default=587, ge=1, le=65535)
+    username: str = ""
+    password: str | None = None
+    from_address: str = ""
+    use_tls: bool = True
+    use_ssl: bool = False
+    public_base_url: str = ""
+
+
+class S3Config(BaseModel):
+    backend: Literal["local", "s3", "memory"] = "s3"
+    endpoint: str = ""
+    bucket: str = ""
+    region: str = "us-east-1"
+    access_key: str = ""
+    secret_key: str | None = None
+    prefix: str = ""
+    use_path_style: bool = True
+
+
+class QueueConfig(BaseModel):
+    max_running: int = Field(default=8, ge=1, le=256)
+    lease_ttl_seconds: int = Field(default=45, ge=5, le=3600)

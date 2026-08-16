@@ -883,8 +883,10 @@ async function renderAI() {
       </form>
       <form id="comfyui-form" class="surface" data-testid="comfyui-form">
         <h3>远程 / 本地 ComfyUI</h3>
+        <p class="muted">局域网地址填 8188；内网穿透后把公网 URL 填到「内网穿透 URL」，健康检查会先探穿透地址。</p>
         <label>名称 <input name="name" value="Local ComfyUI" /></label>
         <label>地址 <input name="baseUrl" value="http://127.0.0.1:8188" /></label>
+        <label>内网穿透 URL <input name="tunnelUrl" placeholder="https://comfy.xxx.ngrok-free.app" /></label>
         <label>鉴权
           <select name="authType">
             <option value="none">无</option>
@@ -941,6 +943,7 @@ async function renderAI() {
       body: JSON.stringify({
         name: form.get("name"),
         base_url: form.get("baseUrl"),
+        tunnel_url: form.get("tunnelUrl") || null,
         auth_type: form.get("authType"),
         token: form.get("token"),
         custom_header_name: form.get("customHeaderName"),
@@ -1203,17 +1206,24 @@ async function renderP2() {
 async function renderOps() {
   setShell("ops");
   await ensureProject();
-  const [jobs, health] = await Promise.all([api(`/projects/${state.projectId}/ai-jobs`), api("/health")]);
+  const [jobs, health, queue] = await Promise.all([
+    api(`/projects/${state.projectId}/ai-jobs`),
+    api("/health"),
+    api("/ops/queue"),
+  ]);
   view.innerHTML = page(
     "Runtime",
     "运维 / Worker",
-    "文件 SQLite 下后台线程会领取 queued 任务；测试内存库默认同步。",
+    "多机 Worker 抢同一条数据库队列。本机可跑后台线程，其他机器执行 mangedong worker。",
     `
       <section class="surface">
         <div class="metric-row">
           <div class="metric"><b>${jobs.length}</b><span>AI Jobs</span></div>
           <div class="metric"><b>${health.worker}</b><span>Worker</span></div>
+          <div class="metric"><b>${health.queue || "database"}</b><span>队列</span></div>
+          <div class="metric"><b>${(queue.workers || []).length}</b><span>在跑机器</span></div>
         </div>
+        <p class="muted">worker_id: ${health.worker_id || "—"} · lease ${health.lease_ttl_seconds || 45}s</p>
         <p></p>
         <button class="primary" id="run-pending">运行 pending jobs</button>
         <button class="ghost" id="worker-tick">立即领取队列</button>
@@ -1303,14 +1313,146 @@ function renderSettings() {
   view.innerHTML = page(
     "Session",
     "设置",
-    "这里只保存登录 token 和当前团队 / 项目。模型 Key 去「模型配置」。",
-    `<form id="context-form" class="surface" data-testid="context-form">
+    "团队 SMTP、S3 和队列在这里配。模型 Key 仍在「模型配置」。",
+    `<form id="smtp-form" class="surface">
+      <h3>SMTP</h3>
+      <p class="muted">每个团队自己的发信配置。邀请和重置密码会先走这里，失败则回退显示令牌。</p>
+      <label>Host <input name="host" placeholder="smtp.example.com" /></label>
+      <label>Port <input name="port" type="number" value="587" /></label>
+      <label>Username <input name="username" /></label>
+      <label>Password <input name="password" type="password" autocomplete="off" /></label>
+      <label>From <input name="fromAddress" placeholder="studio@example.com" /></label>
+      <label>Public URL <input name="publicBaseUrl" placeholder="https://studio.example.com" /></label>
+      <label><input name="useTls" type="checkbox" checked /> STARTTLS</label>
+      <label><input name="useSsl" type="checkbox" /> SMTPS (465)</label>
+      <button class="primary" type="submit">保存 SMTP</button>
+      <button class="ghost" type="button" id="test-smtp">测试连接</button>
+    </form>
+    <form id="s3-form" class="surface">
+      <h3>对象存储 S3</h3>
+      <p class="muted">兼容 AWS / MinIO / R2。对象键按 teams/{team_id}/projects/{project_id}/ 隔离。</p>
+      <label>Backend
+        <select name="backend">
+          <option value="s3">s3</option>
+          <option value="local">local</option>
+          <option value="memory">memory</option>
+        </select>
+      </label>
+      <label>Endpoint <input name="endpoint" placeholder="https://s3.example.com" /></label>
+      <label>Bucket <input name="bucket" /></label>
+      <label>Region <input name="region" value="us-east-1" /></label>
+      <label>Access Key <input name="accessKey" /></label>
+      <label>Secret Key <input name="secretKey" type="password" autocomplete="off" /></label>
+      <label>Prefix <input name="prefix" placeholder="mangedong" /></label>
+      <label><input name="pathStyle" type="checkbox" checked /> Path-style（MinIO / 内网）</label>
+      <button class="primary" type="submit">保存 S3</button>
+      <button class="ghost" type="button" id="test-s3">测试写入</button>
+    </form>
+    <form id="queue-form" class="surface">
+      <h3>多机队列</h3>
+      <label>团队最大并行 <input name="maxRunning" type="number" min="1" value="8" /></label>
+      <label>Lease 秒 <input name="leaseTtl" type="number" min="5" value="45" /></label>
+      <button class="ghost" type="submit">保存队列限额</button>
+    </form>
+    <form id="context-form" class="surface" data-testid="context-form">
       <label>Token <textarea name="token">${state.token}</textarea></label>
       <label>Team ID <input name="teamId" type="number" value="${state.teamId || ""}" /></label>
       <label>Project ID <input name="projectId" type="number" value="${state.projectId || ""}" /></label>
       <button class="primary" type="submit">保存上下文</button>
-    </form>`,
+    </form>
+    <div id="settings-result" class="surface muted"></div>`,
   );
+  document.getElementById("smtp-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await ensureTeam();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/teams/${state.teamId}/smtp`, {
+      method: "PUT",
+      body: JSON.stringify({
+        host: form.get("host"),
+        port: Number(form.get("port") || 587),
+        username: form.get("username"),
+        password: form.get("password"),
+        from_address: form.get("fromAddress"),
+        public_base_url: form.get("publicBaseUrl"),
+        use_tls: form.get("useTls") === "on",
+        use_ssl: form.get("useSsl") === "on",
+      }),
+    });
+    document.getElementById("settings-result").textContent = `SMTP 已保存：${result.data.host}`;
+  });
+  document.getElementById("test-smtp").addEventListener("click", async () => {
+    await ensureTeam();
+    const result = await api(`/teams/${state.teamId}/smtp/test`, { method: "POST" });
+    document.getElementById("settings-result").textContent = `SMTP ${result.mode}: ${result.error || "ok"}`;
+  });
+  document.getElementById("s3-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await ensureTeam();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/teams/${state.teamId}/storage`, {
+      method: "PUT",
+      body: JSON.stringify({
+        backend: form.get("backend"),
+        endpoint: form.get("endpoint"),
+        bucket: form.get("bucket"),
+        region: form.get("region"),
+        access_key: form.get("accessKey"),
+        secret_key: form.get("secretKey"),
+        prefix: form.get("prefix"),
+        use_path_style: form.get("pathStyle") === "on",
+      }),
+    });
+    document.getElementById("settings-result").textContent = `存储已保存：${result.data.backend} ${result.data.bucket || ""}`;
+  });
+  document.getElementById("test-s3").addEventListener("click", async () => {
+    await ensureTeam();
+    const result = await api(`/teams/${state.teamId}/storage/test`, { method: "POST" });
+    document.getElementById("settings-result").textContent = `S3 ${result.mode}: ${result.error || result.backend}`;
+  });
+  document.getElementById("queue-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await ensureTeam();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/teams/${state.teamId}/queue`, {
+      method: "PUT",
+      body: JSON.stringify({ max_running: Number(form.get("maxRunning") || 8), lease_ttl_seconds: Number(form.get("leaseTtl") || 45) }),
+    });
+    document.getElementById("settings-result").textContent = `队列限额：${result.data.max_running}`;
+  });
+  if (state.teamId) {
+    Promise.all([
+      api(`/teams/${state.teamId}/smtp`).catch(() => null),
+      api(`/teams/${state.teamId}/storage`).catch(() => null),
+      api(`/teams/${state.teamId}/queue`).catch(() => null),
+    ]).then(([smtp, storage, queue]) => {
+      const smtpForm = document.getElementById("smtp-form");
+      const s3Form = document.getElementById("s3-form");
+      const queueForm = document.getElementById("queue-form");
+      if (smtp?.data && smtpForm) {
+        smtpForm.host.value = smtp.data.host || "";
+        smtpForm.port.value = smtp.data.port || 587;
+        smtpForm.username.value = smtp.data.username || "";
+        smtpForm.fromAddress.value = smtp.data.from_address || "";
+        smtpForm.publicBaseUrl.value = smtp.data.public_base_url || "";
+        smtpForm.useTls.checked = smtp.data.use_tls !== false;
+        smtpForm.useSsl.checked = Boolean(smtp.data.use_ssl);
+      }
+      if (storage?.data && s3Form) {
+        s3Form.backend.value = storage.data.backend || "s3";
+        s3Form.endpoint.value = storage.data.endpoint || "";
+        s3Form.bucket.value = storage.data.bucket || "";
+        s3Form.region.value = storage.data.region || "us-east-1";
+        s3Form.accessKey.value = storage.data.access_key || "";
+        s3Form.prefix.value = storage.data.prefix || "";
+        s3Form.pathStyle.checked = storage.data.use_path_style !== false;
+      }
+      if (queue?.data && queueForm) {
+        queueForm.maxRunning.value = queue.data.max_running || 8;
+        queueForm.leaseTtl.value = queue.data.lease_ttl_seconds || 45;
+      }
+    });
+  }
   document.getElementById("context-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);

@@ -77,7 +77,48 @@ http://localhost:8000/app
 
 工作台是浅色朱红的生产界面：顶栏项目上下文、左侧生产/交付/系统分组。
 
-第三方 **API Key** 和 **ComfyUI 地址** 只在顶栏「配置模型」或「模型配置」页填写。
+第三方 **API Key** 和 **ComfyUI 地址** 只在顶栏「配置模型」或「模型配置」页填写。ComfyUI 支持局域网 `8188` 加上内网穿透公网 URL。
+
+团队基础设施在「设置」页配置：
+
+- SMTP：邀请和重置密码发信（每个团队一份）
+- S3 兼容存储：AWS / MinIO / R2，对象键按 `teams/{team_id}/projects/{project_id}/` 隔离
+- 多机队列：共享数据库 lease。API 进程可内嵌 worker；其他机器跑 `mangedong worker` 或 `python3 -m mangedong.api.worker_main`
+
+环境变量（全平台默认，可被团队配置覆盖）：
+
+```bash
+MANGEDONG_SMTP_HOST=
+MANGEDONG_SMTP_PORT=587
+MANGEDONG_SMTP_USER=
+MANGEDONG_SMTP_PASSWORD=
+MANGEDONG_SMTP_FROM=
+MANGEDONG_PUBLIC_URL=http://127.0.0.1:8000
+MANGEDONG_S3_ENDPOINT=
+MANGEDONG_S3_BUCKET=
+MANGEDONG_S3_REGION=us-east-1
+MANGEDONG_S3_ACCESS_KEY=
+MANGEDONG_S3_SECRET_KEY=
+MANGEDONG_WORKER_ID=
+MANGEDONG_LEASE_TTL=45
+```
+
+多机部署时，API 和所有 Worker 必须指向同一数据库。SQLite 只适合单机；跨机器请用 PostgreSQL：
+
+```bash
+python3 -m pip install -e ".[postgres]"
+export MANGEDONG_DATABASE_URL="postgresql+psycopg://user:pass@db-host/mangedong"
+# API 节点可关掉内嵌 worker，改由独立机器消费队列
+export MANGEDONG_WORKER=0
+python3 -m uvicorn "mangedong.api.app:create_app" --factory --host 0.0.0.0 --port 8000
+
+# 其他机器
+mangedong worker --database-url "$MANGEDONG_DATABASE_URL"
+# 或
+python3 -m mangedong.api.worker_main
+```
+
+ComfyUI 先在局域网 `8188` 启动，再做内网穿透；把穿透后的公网 URL 填到「内网穿透 URL」。健康检查会先探穿透地址。
 
 当前 SPA 模块按真人工作流拆分：
 
@@ -120,6 +161,15 @@ http://localhost:8000/app
 - `GET /teams`
 - `POST /teams/{team_id}/members`
 - `GET /teams/{team_id}/members`
+- `PUT /teams/{team_id}/smtp`
+- `GET /teams/{team_id}/smtp`
+- `POST /teams/{team_id}/smtp/test`
+- `PUT /teams/{team_id}/storage`
+- `GET /teams/{team_id}/storage`
+- `POST /teams/{team_id}/storage/test`
+- `PUT /teams/{team_id}/queue`
+- `GET /teams/{team_id}/queue`
+- `GET /ops/queue`
 - `POST /projects`
 - `GET /projects?team_id=...`
 - `GET /projects/{project_id}`

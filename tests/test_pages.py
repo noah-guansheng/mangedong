@@ -90,6 +90,10 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "keydown" in script.text
     assert "renderSettings" in script.text
     assert "context-form" in script.text
+    assert "smtp-form" in script.text
+    assert "s3-form" in script.text
+    assert "queue-form" in script.text
+    assert "tunnelUrl" in script.text
     assert "renderP2" in script.text
     assert "就在这一页" in script.text
     assert "auth-gate" in script.text

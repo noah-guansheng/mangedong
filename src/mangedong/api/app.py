@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -56,8 +56,11 @@ from mangedong.api.schemas import (
     ProjectRead,
     ProjectUpdate,
     ProviderCreate,
+    QueueConfig,
     ResourcePayload,
     ReviewCommentCreate,
+    S3Config,
+    SMTPConfig,
     ShotCreate,
     TeamCreate,
     TeamMemberCreate,
@@ -75,11 +78,20 @@ from mangedong.api.schemas import (
     WorkItemRead,
     WorkItemUpdate,
 )
-from mangedong.api.providers import ProviderError, chat_complete, comfyui_credentials, probe_comfyui, provider_credentials, run_comfyui_prompt
+from mangedong.api.mailer import probe_smtp, resolve_smtp, send_mail, smtp_from_env
+from mangedong.api.objectstore import (
+    get_bytes,
+    object_key,
+    persist_local_file,
+    probe_storage,
+    resolve_storage,
+    signed_s3_request,
+)
+from mangedong.api.providers import ProviderError, chat_complete, comfyui_credentials, probe_comfyui_instance, provider_credentials, run_comfyui_prompt
 from mangedong.api.secrets import encrypt_secret, mask_secret, random_password
 from mangedong.api.security import create_access_token, hash_password, parse_access_token, verify_password
 from mangedong.api.services import project_storage, safe_filename, write_export_package, write_mock_wav, write_srt
-from mangedong.api.worker import claim_queued_jobs, process_job, run_worker_forever
+from mangedong.api.worker import claim_queued_jobs, lease_ttl_seconds, process_job, queue_snapshot, reap_expired_leases, run_worker_forever, worker_id
 from mangedong.colorize import AlgorithmicColorizer
 from mangedong.export import VideoExporter
 from mangedong.importer import import_pages
@@ -297,6 +309,79 @@ def get_resource(db: Session, resource_id: int, resource_type: str | None = None
     return resource
 
 
+def latest_team_config(db: Session, team_id: int, resource_type: str) -> ProductionResource | None:
+    items = list_team_resources(db, team_id, resource_type)
+    return items[0] if items else None
+
+
+def upsert_team_config(
+    db: Session,
+    *,
+    team_id: int,
+    resource_type: str,
+    data: dict,
+    created_by_id: int,
+    status: str = "configured",
+) -> ProductionResource:
+    existing = latest_team_config(db, team_id, resource_type)
+    if existing is None:
+        return create_resource(
+            db,
+            team_id=team_id,
+            project_id=None,
+            resource_type=resource_type,
+            status=status,
+            data=data,
+            created_by_id=created_by_id,
+        )
+    existing.data = data
+    existing.status = status
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+
+def resource_read(resource: ProductionResource, data: dict | None = None) -> ProductionResourceRead:
+    return ProductionResourceRead(
+        id=resource.id,
+        team_id=resource.team_id,
+        project_id=resource.project_id,
+        resource_type=resource.resource_type,
+        status=resource.status,
+        data=data if data is not None else resource.data,
+        created_by_id=resource.created_by_id,
+        created_at=resource.created_at,
+        updated_at=resource.updated_at,
+    )
+
+
+def masked_config(data: dict, secret_fields: tuple[str, ...]) -> dict:
+    payload = dict(data)
+    for field in secret_fields:
+        if payload.get(field):
+            payload[field] = mask_secret(str(payload[field]))
+    return payload
+
+
+def attach_object_storage(
+    db: Session,
+    request: Request,
+    *,
+    team_id: int,
+    project_id: int,
+    local_path: str | Path,
+    kind: str,
+    data: dict,
+) -> dict:
+    config_row = latest_team_config(db, team_id, "s3_config")
+    config = resolve_storage(None if config_row is None else config_row.data, request.app.state.secret_key)
+    try:
+        stored = persist_local_file(config, team_id=team_id, project_id=project_id, local_path=local_path, kind=kind)
+        return {**data, **stored}
+    except Exception as exc:
+        return {**data, "storage_backend": "local_fallback", "storage_error": str(exc)}
+
+
 def parse_workflow(workflow_json: dict, published_parameters: dict) -> dict:
     if "nodes" in workflow_json:
         node_count = len(workflow_json.get("nodes", []))
@@ -405,8 +490,14 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     api.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @api.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "worker": "running" if api.state.worker_enabled else "disabled"}
+    def health() -> dict[str, object]:
+        return {
+            "status": "ok",
+            "worker": "running" if api.state.worker_enabled else "disabled",
+            "worker_id": worker_id(),
+            "queue": "database",
+            "lease_ttl_seconds": lease_ttl_seconds(),
+        }
 
     @api.get("/app", response_class=HTMLResponse)
     def workbench_app() -> HTMLResponse:
@@ -764,11 +855,26 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     @api.post("/auth/forgot-password")
     def forgot_password(payload: PasswordResetRequest, request: Request, db: DbSession) -> dict[str, object]:
         user = db.scalar(select(User).where(User.email == payload.email.lower()))
-        result: dict[str, object] = {"ok": True}
-        if user is not None:
-            result["reset_token"] = create_access_token(
-                user.id, request.app.state.secret_key, ttl_seconds=60 * 60, token_type="reset"
-            )
+        result: dict[str, object] = {"ok": True, "delivery": "local_fallback"}
+        if user is None:
+            return result
+        reset_token = create_access_token(
+            user.id, request.app.state.secret_key, ttl_seconds=60 * 60, token_type="reset"
+        )
+        result["reset_token"] = reset_token
+        membership = db.scalar(select(TeamMember).where(TeamMember.user_id == user.id).order_by(TeamMember.created_at.asc()))
+        team_smtp = latest_team_config(db, membership.team_id, "smtp_config") if membership else None
+        config = resolve_smtp(None if team_smtp is None else team_smtp.data, request.app.state.secret_key)
+        public_base = str(config.get("public_base_url") or os.getenv("MANGEDONG_PUBLIC_URL") or "http://127.0.0.1:8000").rstrip("/")
+        sent = send_mail(
+            config,
+            to_address=user.email,
+            subject="mangedong 重置密码",
+            body=f"在工作台登录页使用重置令牌改密。\n令牌：{reset_token}\n入口：{public_base}/app",
+        )
+        result["delivery"] = sent["mode"]
+        if sent.get("error"):
+            result["delivery_error"] = sent["error"]
         return result
 
     @api.post("/auth/reset-password")
@@ -845,6 +951,26 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             db.rollback()
             raise HTTPException(status_code=409, detail="User is already a team member.") from exc
         db.refresh(member)
+        if invite_token:
+            team_smtp = latest_team_config(db, team_id, "smtp_config")
+            config = resolve_smtp(None if team_smtp is None else team_smtp.data, request.app.state.secret_key)
+            public_base = str(config.get("public_base_url") or os.getenv("MANGEDONG_PUBLIC_URL") or "http://127.0.0.1:8000").rstrip("/")
+            sent = send_mail(
+                config,
+                to_address=user.email,
+                subject="邀请加入 mangedong 团队",
+                body=f"你被邀请加入团队。在 {public_base}/app 登录页粘贴邀请令牌。\n令牌：{invite_token}",
+            )
+            record_audit_event(
+                db,
+                team_id=team_id,
+                project_id=None,
+                actor_id=current_user.id,
+                action="member.invited",
+                target_type="team_member",
+                target_id=member.id,
+                metadata={"email": user.email, "delivery": sent["mode"]},
+            )
         return member_response(member, user, invite_token)
 
     @api.get("/teams/{team_id}/members", response_model=list[TeamMemberRead])
@@ -887,6 +1013,99 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             metadata={"role": payload.role},
         )
         return member_response(member, user)
+
+    @api.put("/teams/{team_id}/smtp", response_model=ProductionResourceRead)
+    def upsert_smtp(team_id: int, payload: SMTPConfig, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        data = payload.model_dump(mode="json")
+        existing = latest_team_config(db, team_id, "smtp_config")
+        if not data.get("password") and existing is not None:
+            data["password"] = existing.data.get("password")
+        elif data.get("password"):
+            data["password"] = encrypt_secret(str(data["password"]), request.app.state.secret_key)
+        resource = upsert_team_config(
+            db,
+            team_id=team_id,
+            resource_type="smtp_config",
+            data=data,
+            created_by_id=current_user.id,
+        )
+        return resource_read(resource, masked_config(dict(resource.data), ("password",)))
+
+    @api.get("/teams/{team_id}/smtp")
+    def get_smtp(team_id: int, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_team_membership(db, current_user.id, team_id)
+        resource = latest_team_config(db, team_id, "smtp_config")
+        env = smtp_from_env()
+        return {
+            "configured": bool(resource or env),
+            "source": "team" if resource else ("env" if env else "none"),
+            "data": masked_config(resource.data if resource else env, ("password",)),
+        }
+
+    @api.post("/teams/{team_id}/smtp/test")
+    def test_smtp(team_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        resource = latest_team_config(db, team_id, "smtp_config")
+        config = resolve_smtp(None if resource is None else resource.data, request.app.state.secret_key)
+        return probe_smtp(config)
+
+    @api.put("/teams/{team_id}/storage", response_model=ProductionResourceRead)
+    def upsert_storage(team_id: int, payload: S3Config, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        data = payload.model_dump(mode="json")
+        existing = latest_team_config(db, team_id, "s3_config")
+        if not data.get("secret_key") and existing is not None:
+            data["secret_key"] = existing.data.get("secret_key")
+        elif data.get("secret_key"):
+            data["secret_key"] = encrypt_secret(str(data["secret_key"]), request.app.state.secret_key)
+        resource = upsert_team_config(
+            db,
+            team_id=team_id,
+            resource_type="s3_config",
+            data=data,
+            created_by_id=current_user.id,
+        )
+        return resource_read(resource, masked_config(dict(resource.data), ("secret_key",)))
+
+    @api.get("/teams/{team_id}/storage")
+    def get_storage(team_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_team_membership(db, current_user.id, team_id)
+        resource = latest_team_config(db, team_id, "s3_config")
+        resolved = resolve_storage(None if resource is None else resource.data, request.app.state.secret_key)
+        return {
+            "configured": resolved.get("backend") != "local" or bool(resource),
+            "source": resolved.get("source", "local"),
+            "data": masked_config(resource.data if resource else {k: v for k, v in resolved.items() if k != "secret_key"}, ("secret_key",)),
+        }
+
+    @api.post("/teams/{team_id}/storage/test")
+    def test_storage(team_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        resource = latest_team_config(db, team_id, "s3_config")
+        config = resolve_storage(None if resource is None else resource.data, request.app.state.secret_key)
+        return probe_storage(config)
+
+    @api.put("/teams/{team_id}/queue", response_model=ProductionResourceRead)
+    def upsert_queue(team_id: int, payload: QueueConfig, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        return upsert_team_config(
+            db,
+            team_id=team_id,
+            resource_type="queue_config",
+            data=payload.model_dump(mode="json"),
+            created_by_id=current_user.id,
+        )
+
+    @api.get("/teams/{team_id}/queue")
+    def get_queue(team_id: int, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_team_membership(db, current_user.id, team_id)
+        resource = latest_team_config(db, team_id, "queue_config")
+        snapshot = queue_snapshot(db)
+        return {
+            "data": resource.data if resource else {"max_running": 8, "lease_ttl_seconds": lease_ttl_seconds()},
+            "snapshot": snapshot,
+        }
 
     @api.post("/projects", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
     def create_project(payload: ProjectCreate, current_user: CurrentUser, db: DbSession) -> Project:
@@ -1520,7 +1739,13 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     @api.post("/ops/worker/tick", response_model=list[AIJobRead])
     def worker_tick(request: Request, current_user: CurrentUser, db: DbSession) -> list[AIJob]:
         _ = current_user
+        reap_expired_leases(db)
         return claim_queued_jobs(db, request.app.state.storage_dir)
+
+    @api.get("/ops/queue")
+    def ops_queue(current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        _ = current_user
+        return queue_snapshot(db)
 
     @api.post("/teams/{team_id}/ai-providers", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_ai_provider(
@@ -1604,11 +1829,17 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     def check_comfyui_instance(instance_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         instance = get_resource(db, instance_id, "comfyui_instance")
         require_team_role(db, current_user.id, instance.team_id, MANAGE_TEAM_ROLES)
-        base_url, token, auth_type = comfyui_credentials(instance.data, request.app.state.secret_key)
+        _base_url, token, auth_type = comfyui_credentials(instance.data, request.app.state.secret_key)
         try:
-            probe = probe_comfyui(base_url, token, auth_type)
+            probe = probe_comfyui_instance(instance.data, token, auth_type)
             instance.status = "healthy"
-            health = {"status": "ok", "mode": "live", "checked_at": utc_now().isoformat(), "payload": probe.get("payload")}
+            health = {
+                "status": "ok",
+                "mode": "live",
+                "checked_at": utc_now().isoformat(),
+                "endpoint": probe.get("endpoint"),
+                "payload": probe.get("payload"),
+            }
         except ProviderError as exc:
             instance.status = "fallback"
             health = {"status": "unreachable", "mode": "fallback", "checked_at": utc_now().isoformat(), "error": str(exc)}
@@ -1703,13 +1934,31 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
         filename = safe_filename(str(payload.data.get("filename", "upload.bin")))
         path = project_storage(request.app.state.storage_dir, project.id, "presigned", filename)
+        storage_row = latest_team_config(db, project.team_id, "s3_config")
+        config = resolve_storage(None if storage_row is None else storage_row.data, request.app.state.secret_key)
+        data: dict = {"upload_uri": str(path), "method": "local_put", "expires_in_seconds": 900}
+        if config.get("backend") == "s3" and config.get("bucket"):
+            key = object_key(project.team_id, project.id, f"uploads/{filename}", str(config.get("prefix") or ""))
+            try:
+                url, headers = signed_s3_request(config, "PUT", key, b"", unsigned=True)
+                data = {
+                    "upload_uri": url,
+                    "method": "s3_put",
+                    "headers": headers,
+                    "object_uri": f"s3://{config['bucket']}/{key}",
+                    "storage_key": key,
+                    "expires_in_seconds": 900,
+                    "local_fallback_uri": str(path),
+                }
+            except Exception as exc:
+                data["storage_error"] = str(exc)
         return create_resource(
             db,
             team_id=project.team_id,
             project_id=project.id,
             resource_type="storage_intent",
             status="ready",
-            data={"upload_uri": str(path), "method": "local_put", "expires_in_seconds": 900},
+            data=data,
             created_by_id=current_user.id,
         )
 
@@ -1826,13 +2075,22 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         colorized = AlgorithmicColorizer(palette=palette).colorize(cropped)
         output_path = project_storage(request.app.state.storage_dir, panel.project_id, "colorized", f"panel-{panel.id}.png")
         colorized.save(output_path)
+        data = attach_object_storage(
+            db,
+            request,
+            team_id=panel.team_id,
+            project_id=panel.project_id,
+            local_path=output_path,
+            kind="colorized",
+            data={"panel_id": panel.id, "palette": palette, "output_asset_uri": str(output_path)},
+        )
         return create_resource(
             db,
             team_id=panel.team_id,
             project_id=panel.project_id,
             resource_type="colorization",
             status="succeeded",
-            data={"panel_id": panel.id, "palette": palette, "output_asset_uri": str(output_path)},
+            data=data,
             created_by_id=current_user.id,
         )
 
@@ -1921,16 +2179,17 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
                 base_url, token, auth_type = comfyui_credentials(instances[0].data, request.app.state.secret_key)
                 workflows = list_project_resources(db, panel.project_id, "workflow")
                 workflow_json = workflows[0].data.get("workflow_json") if workflows else {"1": {"class_type": "LoadImage", "inputs": {}}}
-                run_comfyui_prompt(base_url, workflow_json, token=token, auth_type=auth_type)
+                run_comfyui_prompt(base_url, workflow_json, token=token, auth_type=auth_type, timeout=4.0)
                 execution_mode = "comfyui_live"
             except ProviderError:
                 execution_mode = "local_fallback"
-        return create_resource(
+        data = attach_object_storage(
             db,
+            request,
             team_id=panel.team_id,
             project_id=panel.project_id,
-            resource_type="video_clip",
-            status="generated",
+            local_path=output_path,
+            kind="videos",
             data={
                 "panel_id": panel.id,
                 "provider": payload.data.get("provider", "comfyui"),
@@ -1940,6 +2199,14 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
                 "frame_count": frame_count,
                 "execution_mode": execution_mode,
             },
+        )
+        return create_resource(
+            db,
+            team_id=panel.team_id,
+            project_id=panel.project_id,
+            resource_type="video_clip",
+            status="generated",
+            data=data,
             created_by_id=current_user.id,
         )
 
@@ -1949,16 +2216,40 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         panel_id = int(clip.data.get("panel_id") or 0)
         return generate_panel_video(panel_id, payload, request, current_user, db)
 
-    @api.get("/resources/{resource_id}/file")
-    def resource_file(resource_id: int, current_user: CurrentUser, db: DbSession) -> FileResponse:
+    @api.get("/resources/{resource_id}/file", response_model=None)
+    def resource_file(resource_id: int, request: Request, current_user: CurrentUser, db: DbSession):
         resource = get_resource(db, resource_id)
         if resource.project_id is None:
             raise HTTPException(status_code=404, detail="Resource file not found.")
         require_project_access(db, current_user.id, resource.project_id)
-        uri = resource.data.get("output_asset_uri") or resource.data.get("preview_uri") or resource.data.get("audio_uri") or resource.data.get("package_uri")
+        uri = (
+            resource.data.get("output_asset_uri")
+            or resource.data.get("preview_uri")
+            or resource.data.get("audio_uri")
+            or resource.data.get("package_uri")
+            or resource.data.get("object_uri")
+        )
         if not uri:
             raise HTTPException(status_code=404, detail="Resource file not found.")
-        path = Path(str(uri))
+        text_uri = str(uri)
+        if text_uri.startswith(("s3://", "memory://")):
+            config_row = latest_team_config(db, resource.team_id, "s3_config")
+            config = resolve_storage(None if config_row is None else config_row.data, request.app.state.secret_key)
+            try:
+                payload = get_bytes(text_uri, config)
+            except Exception as exc:
+                raise HTTPException(status_code=404, detail=f"Resource file not found: {exc}") from exc
+            media = "application/octet-stream"
+            if text_uri.endswith(".png"):
+                media = "image/png"
+            elif text_uri.endswith(".mp4"):
+                media = "video/mp4"
+            elif text_uri.endswith(".wav"):
+                media = "audio/wav"
+            return Response(content=payload, media_type=media)
+        path = Path(text_uri)
+        if not path.exists() and resource.data.get("local_path"):
+            path = Path(str(resource.data["local_path"]))
         if not path.exists():
             raise HTTPException(status_code=404, detail="Resource file not found.")
         return FileResponse(path)
@@ -2035,13 +2326,21 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             project_id=shot.project_id,
             resource_type="animatic",
             status="generated",
-            data={
-                "shot_id": shot.id,
-                "preview_uri": str(output_path),
-                "output_asset_uri": str(output_path),
-                "duration_seconds": duration,
-                "frame_count": frame_count,
-            },
+            data=attach_object_storage(
+                db,
+                request,
+                team_id=shot.team_id,
+                project_id=shot.project_id or 0,
+                local_path=output_path,
+                kind="animatics",
+                data={
+                    "shot_id": shot.id,
+                    "preview_uri": str(output_path),
+                    "output_asset_uri": str(output_path),
+                    "duration_seconds": duration,
+                    "frame_count": frame_count,
+                },
+            ),
             created_by_id=current_user.id,
         )
 

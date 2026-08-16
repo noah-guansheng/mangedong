@@ -55,15 +55,30 @@ def http_json(
     return parsed
 
 
-def probe_comfyui(base_url: str, token: str | None = None, auth_type: str = "none") -> dict[str, Any]:
+def probe_comfyui(base_url: str, token: str | None = None, auth_type: str = "none", timeout: float = 1.5) -> dict[str, Any]:
     root = assert_safe_url(base_url)
     headers = _auth_headers(auth_type, token)
     for path in ("/system_stats", "/queue"):
         try:
-            return {"ok": True, "mode": "live", "payload": http_json("GET", f"{root}{path}", headers=headers, timeout=1.5)}
+            return {"ok": True, "mode": "live", "payload": http_json("GET", f"{root}{path}", headers=headers, timeout=timeout)}
         except ProviderError:
             continue
     raise ProviderError(f"ComfyUI unreachable at {root}")
+
+
+def probe_comfyui_instance(instance_data: dict[str, Any], token: str | None = None, auth_type: str = "none") -> dict[str, Any]:
+    urls = [url for url in (instance_data.get("tunnel_url"), instance_data.get("base_url")) if url]
+    last_error: Exception | None = None
+    for url in urls:
+        timeout = 4.0 if url == instance_data.get("tunnel_url") else 1.5
+        try:
+            result = probe_comfyui(str(url), token, auth_type, timeout=timeout)
+            result["endpoint"] = str(url)
+            return result
+        except ProviderError as exc:
+            last_error = exc
+            continue
+    raise last_error or ProviderError("ComfyUI unreachable")
 
 
 def run_comfyui_prompt(
@@ -117,7 +132,7 @@ def provider_credentials(provider_data: dict[str, Any], secret_key: str) -> tupl
 
 
 def comfyui_credentials(instance_data: dict[str, Any], secret_key: str) -> tuple[str, str, str]:
-    base_url = str(instance_data.get("base_url") or "")
+    base_url = str(instance_data.get("tunnel_url") or instance_data.get("base_url") or "")
     token = decrypt_secret(str(instance_data.get("token") or ""), secret_key)
     auth_type = str(instance_data.get("auth_type") or "none")
     return base_url, token, auth_type

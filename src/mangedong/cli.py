@@ -110,5 +110,31 @@ def doctor() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("worker")
+def worker_cmd(
+    database_url: Annotated[str | None, typer.Option("--database-url", help="Shared database URL for the job queue.")] = None,
+    storage_dir: Annotated[Path | None, typer.Option("--storage-dir", help="Local cache directory.")] = None,
+    interval: Annotated[float, typer.Option("--interval", min=0.2, help="Polling interval in seconds.")] = 1.0,
+) -> None:
+    """Run a multi-machine worker that claims jobs from the shared database queue."""
+
+    from mangedong.api.db import build_session_factory, init_db
+    from mangedong.api.worker import run_worker_forever, worker_id
+    import os
+    import threading
+
+    resolved_db = database_url or os.getenv("MANGEDONG_DATABASE_URL", "sqlite:///./mangedong.db")
+    resolved_storage = Path(storage_dir or os.getenv("MANGEDONG_STORAGE_DIR", "./mangedong_storage")).resolve()
+    resolved_storage.mkdir(parents=True, exist_ok=True)
+    session_factory = build_session_factory(resolved_db)
+    init_db(session_factory)
+    stop = threading.Event()
+    typer.echo(f"worker {worker_id()} queue=database db={resolved_db}")
+    try:
+        run_worker_forever(session_factory, resolved_storage, stop, interval=interval)
+    except KeyboardInterrupt:
+        stop.set()
+
+
 if __name__ == "__main__":
     app()
