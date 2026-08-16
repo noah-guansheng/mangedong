@@ -72,6 +72,8 @@
 - `/app` SPA 壳渲染
 - `/static/workbench.js` 加载
 - 前端脚本包含 Dashboard、AI、P2 路由
+- 前端脚本包含漫画导入、上色生产、Shot / Timeline、音频字幕路由
+- 前端脚本包含对应生产表单：导入、上色、Shot、Dialogue
 
 ### 4. PRD P0 完整链路测试
 

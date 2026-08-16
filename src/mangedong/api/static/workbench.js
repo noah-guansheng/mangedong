@@ -32,6 +32,10 @@ function renderRoute(route) {
     auth: renderAuth,
     dashboard: renderDashboard,
     production: renderProduction,
+    import: renderImport,
+    color: renderColor,
+    timeline: renderTimeline,
+    audio: renderAudio,
     ai: renderAI,
     review: renderReview,
     p2: renderP2,
@@ -143,6 +147,154 @@ async function renderProduction() {
     </section>
   `;
   setStatus("生产工作台已加载");
+}
+
+async function renderImport() {
+  await ensureProject();
+  view.innerHTML = `
+    <h2>漫画导入</h2>
+    <form id="manga-import-form" data-testid="manga-import-form">
+      <label>章节名称 <input name="chapterTitle" value="Chapter 1" /></label>
+      <label>漫画图片/CBZ/ZIP <input name="file" type="file" /></label>
+      <button class="primary" type="submit">导入漫画</button>
+    </form>
+    <form id="pdf-import-form" data-testid="pdf-import-form">
+      <label>PDF 章节名称 <input name="chapterTitle" value="PDF Chapter" /></label>
+      <label>页数 <input name="pageCount" type="number" min="1" value="1" /></label>
+      <label>PDF 文件 <input name="file" type="file" /></label>
+      <button class="primary" type="submit">导入 PDF</button>
+    </form>
+    <div id="import-result" class="card"></div>
+  `;
+  document.getElementById("manga-import-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    form.set("chapter_title", form.get("chapterTitle"));
+    const result = await api(`/projects/${state.projectId}/imports/manga`, { method: "POST", body: form });
+    document.getElementById("import-result").textContent = `导入成功：${result.data.page_count} 页`;
+    setStatus("漫画导入完成");
+  });
+  document.getElementById("pdf-import-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    form.set("chapter_title", form.get("chapterTitle"));
+    form.set("page_count", form.get("pageCount"));
+    const result = await api(`/projects/${state.projectId}/imports/pdf`, { method: "POST", body: form });
+    document.getElementById("import-result").textContent = `PDF 导入成功：${result.data.page_count} 页`;
+    setStatus("PDF 导入完成");
+  });
+}
+
+async function renderColor() {
+  await ensureProject();
+  view.innerHTML = `
+    <h2>上色生产</h2>
+    <form id="colorize-form" data-testid="colorize-form">
+      <label>Panel ID <input name="panelId" type="number" min="1" /></label>
+      <label>Palette
+        <select name="palette">
+          <option value="cel">cel</option>
+          <option value="sunset">sunset</option>
+          <option value="pastel">pastel</option>
+        </select>
+      </label>
+      <button class="primary" type="submit">生成上色 PNG</button>
+    </form>
+    <form id="batch-color-form" data-testid="batch-color-form">
+      <label>范围 <input name="scope" value="project" /></label>
+      <button class="primary" type="submit">批量上色</button>
+    </form>
+    <div id="color-result" class="card"></div>
+  `;
+  document.getElementById("colorize-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const panelId = form.get("panelId");
+    const result = await api(`/panels/${panelId}/colorize`, {
+      method: "POST",
+      body: JSON.stringify({ data: { palette: form.get("palette") } }),
+    });
+    document.getElementById("color-result").textContent = `上色输出：${result.data.output_asset_uri}`;
+  });
+  document.getElementById("batch-color-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/projects/${state.projectId}/batch-colorize`, {
+      method: "POST",
+      body: JSON.stringify({ data: { scope: form.get("scope") } }),
+    });
+    document.getElementById("color-result").textContent = `批量任务：${result.status}`;
+  });
+}
+
+async function renderTimeline() {
+  await ensureProject();
+  view.innerHTML = `
+    <h2>Shot / Timeline</h2>
+    <form id="shot-form" data-testid="shot-form">
+      <label>Shot 标题 <input name="title" value="Shot 001" /></label>
+      <label>时长 <input name="duration" type="number" value="3" /></label>
+      <button class="primary" type="submit">创建 Shot</button>
+    </form>
+    <form id="timeline-form" data-testid="timeline-form">
+      <label>Timeline 名称 <input name="name" value="Main Timeline" /></label>
+      <button class="primary" type="submit">创建 Timeline</button>
+    </form>
+    <div id="timeline-result" class="card"></div>
+  `;
+  document.getElementById("shot-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/projects/${state.projectId}/shots`, {
+      method: "POST",
+      body: JSON.stringify({ title: form.get("title"), duration_seconds: Number(form.get("duration")) }),
+    });
+    document.getElementById("timeline-result").textContent = `Shot 已创建：${result.id}`;
+  });
+  document.getElementById("timeline-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/projects/${state.projectId}/timelines`, {
+      method: "POST",
+      body: JSON.stringify({ name: form.get("name") }),
+    });
+    document.getElementById("timeline-result").textContent = `Timeline 已创建：${result.id}`;
+  });
+}
+
+async function renderAudio() {
+  await ensureProject();
+  view.innerHTML = `
+    <h2>音频字幕</h2>
+    <form id="dialogue-form" data-testid="dialogue-form">
+      <label>Shot ID <input name="shotId" type="number" min="1" /></label>
+      <label>台词 <input name="text" value="开始吧" /></label>
+      <button class="primary" type="submit">创建台词</button>
+    </form>
+    <form id="music-form" data-testid="music-form">
+      <label>BGM URI <input name="assetUri" value="local://bgm.wav" /></label>
+      <button class="primary" type="submit">添加 BGM</button>
+    </form>
+    <div id="audio-result" class="card"></div>
+  `;
+  document.getElementById("dialogue-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/shots/${form.get("shotId")}/dialogue-lines`, {
+      method: "POST",
+      body: JSON.stringify({ edited_text: form.get("text"), source_language: "zh" }),
+    });
+    document.getElementById("audio-result").textContent = `DialogueLine 已创建：${result.id}`;
+  });
+  document.getElementById("music-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/projects/${state.projectId}/music-cues`, {
+      method: "POST",
+      body: JSON.stringify({ data: { asset_uri: form.get("assetUri") } }),
+    });
+    document.getElementById("audio-result").textContent = `MusicCue 已创建：${result.id}`;
+  });
 }
 
 async function renderAI() {

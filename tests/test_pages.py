@@ -28,10 +28,22 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert app_page.status_code == 200
     assert 'data-testid="workbench-root"' in app_page.text
     assert "/static/workbench.js" in app_page.text
+    assert "漫画导入" in app_page.text
+    assert "上色生产" in app_page.text
+    assert "Shot / Timeline" in app_page.text
+    assert "音频字幕" in app_page.text
 
     script = client.get("/static/workbench.js")
     assert script.status_code == 200
     assert "renderDashboard" in script.text
+    assert "renderImport" in script.text
+    assert "manga-import-form" in script.text
+    assert "renderColor" in script.text
+    assert "colorize-form" in script.text
+    assert "renderTimeline" in script.text
+    assert "shot-form" in script.text
+    assert "renderAudio" in script.text
+    assert "dialogue-form" in script.text
     assert "renderAI" in script.text
     assert "renderP2" in script.text
 

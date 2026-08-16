@@ -69,6 +69,26 @@ MANGEDONG_SECRET_KEY="change-me"
 MANGEDONG_STORAGE_DIR="./mangedong_storage"
 ```
 
+完整前端工作台入口：
+
+```bash
+http://localhost:8000/app
+```
+
+当前 SPA 工作台模块：
+
+- 登录 / 注册
+- Dashboard
+- 生产工作台
+- 漫画导入
+- 上色生产
+- Shot / Timeline
+- 音频字幕
+- AI / ComfyUI
+- 审核导出
+- P2 管理
+- 运维 / Worker
+
 当前已实现的第一轮 API：
 
 - `GET /health`
