@@ -88,6 +88,77 @@ def test_project_brief_requires_producer_level_role(client: TestClient) -> None:
     assert [item["id"] for item in projects.json()] == [project["id"]]
 
 
+def test_project_production_objects_flow(client: TestClient) -> None:
+    owner_token = _register_and_login(client, "owner@example.com")
+    team_id = client.post("/teams", json={"name": "Production Team"}, headers=_auth(owner_token)).json()["id"]
+    project_id = client.post("/projects", json=_project_payload(team_id), headers=_auth(owner_token)).json()["id"]
+
+    asset = client.post(
+        f"/projects/{project_id}/assets",
+        json={"name": "page-001.png", "asset_type": "manga_page", "uri": "s3://team/project/page-001.png"},
+        headers=_auth(owner_token),
+    )
+    assert asset.status_code == 201
+
+    chapter = client.post(
+        f"/projects/{project_id}/chapters",
+        json={"title": "Chapter 1", "source_language": "zh"},
+        headers=_auth(owner_token),
+    )
+    assert chapter.status_code == 201
+    chapter_id = chapter.json()["id"]
+
+    page = client.post(
+        f"/chapters/{chapter_id}/pages",
+        json={"page_number": 1, "image_uri": "s3://team/project/page-001.png"},
+        headers=_auth(owner_token),
+    )
+    assert page.status_code == 201
+    page_id = page.json()["id"]
+
+    panel = client.post(
+        f"/pages/{page_id}/panels",
+        json={"panel_index": 1, "bbox": {"x": 0, "y": 0, "width": 100, "height": 200}},
+        headers=_auth(owner_token),
+    )
+    assert panel.status_code == 201
+
+    work_item = client.post(
+        f"/projects/{project_id}/work-items",
+        json={"title": "Approve character colors", "stage": "color", "priority": "high"},
+        headers=_auth(owner_token),
+    )
+    assert work_item.status_code == 201
+    assert work_item.json()["stage"] == "color"
+
+    gate = client.post(
+        f"/projects/{project_id}/production-gates",
+        json={"gate_type": "color_bible", "scope": "chapter-1", "required_checks": ["character colors approved"]},
+        headers=_auth(owner_token),
+    )
+    assert gate.status_code == 201
+
+    approved_gate = client.post(f"/production-gates/{gate.json()['id']}/approve", headers=_auth(owner_token))
+    assert approved_gate.status_code == 200
+    assert approved_gate.json()["status"] == "approved"
+
+    job = client.post(
+        f"/projects/{project_id}/ai-jobs",
+        json={"job_type": "colorize", "provider": "manual", "input_payload": {"page_id": page_id}},
+        headers=_auth(owner_token),
+    )
+    assert job.status_code == 201
+    assert job.json()["status"] == "created"
+
+    assert len(client.get(f"/projects/{project_id}/assets", headers=_auth(owner_token)).json()) == 1
+    assert len(client.get(f"/projects/{project_id}/chapters", headers=_auth(owner_token)).json()) == 1
+    assert len(client.get(f"/chapters/{chapter_id}/pages", headers=_auth(owner_token)).json()) == 1
+    assert len(client.get(f"/pages/{page_id}/panels", headers=_auth(owner_token)).json()) == 1
+    assert len(client.get(f"/projects/{project_id}/work-items", headers=_auth(owner_token)).json()) == 1
+    assert len(client.get(f"/projects/{project_id}/production-gates", headers=_auth(owner_token)).json()) == 1
+    assert len(client.get(f"/projects/{project_id}/ai-jobs", headers=_auth(owner_token)).json()) == 1
+
+
 def _register_and_login(client: TestClient, email: str) -> str:
     response = client.post(
         "/auth/register",

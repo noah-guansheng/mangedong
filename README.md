@@ -71,6 +71,10 @@ MANGEDONG_SECRET_KEY="change-me"
 当前已实现的第一轮 API：
 
 - `GET /health`
+- `GET /ui/login`
+- `GET /ui/dashboard`
+- `GET /ui/projects?team_id=...`
+- `GET /ui/projects/{project_id}/production`
 - `POST /auth/register`
 - `POST /auth/login`
 - `GET /auth/me`
@@ -81,6 +85,21 @@ MANGEDONG_SECRET_KEY="change-me"
 - `POST /projects`
 - `GET /projects?team_id=...`
 - `GET /projects/{project_id}`
+- `POST /projects/{project_id}/assets`
+- `GET /projects/{project_id}/assets`
+- `POST /projects/{project_id}/chapters`
+- `GET /projects/{project_id}/chapters`
+- `POST /chapters/{chapter_id}/pages`
+- `GET /chapters/{chapter_id}/pages`
+- `POST /pages/{page_id}/panels`
+- `GET /pages/{page_id}/panels`
+- `POST /projects/{project_id}/work-items`
+- `GET /projects/{project_id}/work-items`
+- `POST /projects/{project_id}/production-gates`
+- `GET /projects/{project_id}/production-gates`
+- `POST /production-gates/{gate_id}/approve`
+- `POST /projects/{project_id}/ai-jobs`
+- `GET /projects/{project_id}/ai-jobs`
 
 ## 后续扩展方向
 
