@@ -199,6 +199,21 @@ function renderAuth() {
           <label>Display name <input name="displayName" value="Owner" /></label>
           <button class="primary" type="submit">进入工作台</button>
         </form>
+        <form id="reset-form" class="surface">
+          <h3>忘记密码</h3>
+          <label>邮箱 <input name="email" type="email" value="owner@example.com" /></label>
+          <label>新密码 <input name="password" type="password" value="password123" /></label>
+          <button class="ghost" type="submit">发送重置并改密</button>
+          <p id="reset-result" class="muted"></p>
+        </form>
+        <form id="invite-form" class="surface">
+          <h3>接受邀请</h3>
+          <label>邀请令牌 <input name="token" /></label>
+          <label>Display name <input name="displayName" value="Artist" /></label>
+          <label>设置密码 <input name="password" type="password" value="password123" /></label>
+          <button class="ghost" type="submit">加入团队</button>
+          <p id="invite-result" class="muted"></p>
+        </form>
       </div>
     </section>
   `;
@@ -215,6 +230,29 @@ function renderAuth() {
     state.token = login.access_token;
     persistSession();
     setStatus("登录成功");
+    await renderDashboard();
+  });
+  document.getElementById("reset-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const forgot = await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email: form.get("email") }) });
+    if (!forgot.reset_token) {
+      document.getElementById("reset-result").textContent = "如果邮箱存在，会发出重置令牌。";
+      return;
+    }
+    await api("/auth/reset-password", { method: "POST", body: JSON.stringify({ token: forgot.reset_token, password: form.get("password") }) });
+    document.getElementById("reset-result").textContent = "密码已重置，请用新密码登录。";
+  });
+  document.getElementById("invite-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const accepted = await api("/auth/accept-invite", {
+      method: "POST",
+      body: JSON.stringify({ token: form.get("token"), password: form.get("password"), display_name: form.get("displayName") }),
+    });
+    state.token = accepted.access_token;
+    persistSession();
+    document.getElementById("invite-result").textContent = "邀请已接受，正在进入工作台。";
     await renderDashboard();
   });
 }
@@ -265,16 +303,26 @@ async function ensureProject() {
 async function renderDashboard() {
   setShell("dashboard");
   await ensureTeam();
-  const [projects, members] = await Promise.all([
+  const [projects, members, workItems] = await Promise.all([
     api(`/projects?team_id=${state.teamId}`),
     api(`/teams/${state.teamId}/members`),
+    state.projectId ? api(`/projects/${state.projectId}/work-items`) : Promise.resolve([]),
   ]);
   view.innerHTML = page(
     "Overview",
     "项目总览",
     "查看剧集状态和进度，选中后进入导入、分格和镜头。",
-    `<section class="surface" id="dashboard-cards"></section>`,
-    `<button class="primary" id="create-project">新建剧集</button>`,
+    `<section class="surface" id="dashboard-cards"></section>
+     <form id="brief-form" class="surface">
+       <h3>立项向导</h3>
+       <label>剧集名 <input name="name" value="Episode 1" /></label>
+       <label>客户 <input name="customer" value="Demo Client" /></label>
+       <label>IP <input name="ip" value="Demo IP" /></label>
+       <label>章节范围 <input name="scope" value="Chapter 1" /></label>
+       <label>时长（分钟） <input name="runtime" type="number" value="3" /></label>
+       <button class="primary" type="submit">创建剧集</button>
+     </form>`,
+    `<button class="ghost" id="create-project">快速创建默认剧集</button>`,
   );
   const rows = projects
     .map((project) => {
@@ -299,9 +347,48 @@ async function renderDashboard() {
         ? `<table class="data-table"><thead><tr><th>剧集</th><th>状态</th><th>ID</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
         : `<div class="empty">还没有项目。先新建剧集，再去模型配置填 Key。</div>`
     }
+    ${
+      workItems.length
+        ? `<h3>当前项目任务</h3><table class="data-table"><thead><tr><th>任务</th><th>阶段</th><th>状态</th><th></th></tr></thead><tbody>${workItems
+            .map(
+              (item) => `<tr><td>${item.title}</td><td>${item.stage}</td><td>${item.status}</td><td>
+                <button class="ghost" data-item-id="${item.id}" data-status="in_progress">开始</button>
+                <button class="ghost" data-item-id="${item.id}" data-status="done">完成</button>
+              </td></tr>`,
+            )
+            .join("")}</tbody></table>`
+        : ""
+    }
   `;
   document.getElementById("create-project").addEventListener("click", async () => {
     await createDefaultProject();
+    await renderDashboard();
+  });
+  document.getElementById("brief-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await ensureTeam();
+    const project = await api("/projects", {
+      method: "POST",
+      body: JSON.stringify({
+        team_id: state.teamId,
+        name: form.get("name"),
+        brief: {
+          customer_name: form.get("customer"),
+          ip_name: form.get("ip"),
+          chapter_scope: form.get("scope"),
+          estimated_runtime_minutes: Number(form.get("runtime") || 3),
+          target_languages: ["zh", "ja", "en"],
+          aspect_ratio: "16:9",
+          resolution: "1920x1080",
+          fps: 24,
+          authorization_status: "licensed",
+        },
+      }),
+    });
+    state.projectId = project.id;
+    persistSession();
+    setStatus("立项完成");
     await renderDashboard();
   });
   document.querySelectorAll("[data-project-id]").forEach((button) => {
@@ -310,6 +397,13 @@ async function renderDashboard() {
       persistSession();
       setStatus(`当前项目：${state.projectId}`);
       renderDashboard();
+    });
+  });
+  document.querySelectorAll("[data-item-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/work-items/${button.dataset.itemId}`, { method: "PATCH", body: JSON.stringify({ status: button.dataset.status }) });
+      setStatus("任务状态已更新");
+      await renderDashboard();
     });
   });
   setStatus("Dashboard 已加载");
@@ -489,7 +583,14 @@ async function renderPanels() {
       };
       const body = action === "colorize" ? { data: { palette: "cel" } } : action === "video" ? { data: { provider: "comfyui", duration_seconds: 3 } } : undefined;
       const result = await api(paths[action], { method: "POST", body: body ? JSON.stringify(body) : undefined });
-      document.getElementById("panel-result").textContent = `${action} → ${result.resource_type || result.status} #${result.id}`;
+      document.getElementById("panel-result").textContent = `${action} → ${result.resource_type || result.status} #${result.id} ${result.data?.execution_mode || result.data?.mode || ""}`;
+      const preview = document.getElementById("panel-preview");
+      if (preview && result.data?.output_asset_uri) {
+        preview.innerHTML =
+          action === "video"
+            ? `<video class="player" controls src="/resources/${result.id}/file"></video>`
+            : `<img alt="${action} preview" src="/resources/${result.id}/file" />`;
+      }
       setStatus(`${action} 完成`);
     });
   });
@@ -569,12 +670,33 @@ async function renderColor() {
 async function renderTimeline() {
   setShell("timeline");
   await ensureProject();
-  const shots = await api(`/projects/${state.projectId}/resources?resource_type=shot`);
+  const [shots, timelines, clips] = await Promise.all([
+    api(`/projects/${state.projectId}/resources?resource_type=shot`),
+    api(`/projects/${state.projectId}/resources?resource_type=timeline`),
+    api(`/projects/${state.projectId}/resources?resource_type=video_clip`),
+  ]);
+  const timeline = timelines[0];
+  const items = timeline?.data?.items || [];
+  const total = Math.max(12, ...items.map((item) => Number(item.end_seconds || 0)), ...shots.map((shot) => Number(shot.data.duration_seconds || 0)));
   view.innerHTML = page(
     "Editorial",
     "Shot / Timeline",
     "先建镜头，再出 Animatic，最后挂到时间线。",
     `
+      <section class="surface">
+        <h3>装配时间线</h3>
+        ${
+          items.length
+            ? items
+                .map((item) => {
+                  const start = (Number(item.start_seconds || 0) / total) * 100;
+                  const width = Math.max(8, ((Number(item.end_seconds || 0) - Number(item.start_seconds || 0)) / total) * 100);
+                  return `<div class="track-row"><span>${item.item_type}</span><div class="track"><b style="left:${start}%;width:${width}%"></b></div></div>`;
+                })
+                .join("")
+            : `<div class="empty">还没有时间线片段。先创建 Shot，再创建 Timeline。</div>`
+        }
+      </section>
       <section class="surface">
         <h3>Shot List</h3>
         ${
@@ -598,6 +720,19 @@ async function renderTimeline() {
           <button class="ghost" type="submit">创建 Timeline</button>
         </form>
       </div>
+      <div class="split">
+        <form id="animatic-form" class="surface">
+          <h3>Animatic</h3>
+          <label>Shot ID <input name="shotId" type="number" min="1" value="${shots[0]?.id || ""}" /></label>
+          <button class="ghost" type="submit">生成 Animatic MP4</button>
+        </form>
+        <form id="timeline-item-form" class="surface">
+          <h3>挂到时间线</h3>
+          <label>Timeline ID <input name="timelineId" type="number" min="1" value="${timeline?.id || ""}" /></label>
+          <label>Clip ID <input name="clipId" type="number" min="1" value="${clips[0]?.id || ""}" /></label>
+          <button class="ghost" type="submit">添加片段</button>
+        </form>
+      </div>
       <div id="timeline-result" class="surface"></div>
     `,
   );
@@ -613,6 +748,22 @@ async function renderTimeline() {
     const form = new FormData(event.currentTarget);
     const result = await api(`/projects/${state.projectId}/timelines`, { method: "POST", body: JSON.stringify({ name: form.get("name") }) });
     document.getElementById("timeline-result").textContent = `Timeline 已创建：${result.id}`;
+  });
+  document.getElementById("animatic-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/shots/${form.get("shotId")}/generate-animatic`, { method: "POST" });
+    document.getElementById("timeline-result").innerHTML = `Animatic 已生成：#${result.id}<br><video class="player" controls src="/resources/${result.id}/file"></video>`;
+  });
+  document.getElementById("timeline-item-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/timelines/${form.get("timelineId")}/items`, {
+      method: "POST",
+      body: JSON.stringify({ item_type: "video", resource_id: Number(form.get("clipId")), start_seconds: 0, end_seconds: 3 }),
+    });
+    document.getElementById("timeline-result").textContent = `已挂到时间线，共 ${result.data.items.length} 段`;
+    setStatus("时间线已更新");
   });
 }
 
@@ -630,6 +781,10 @@ async function renderAudio() {
           <label>Shot ID <input name="shotId" type="number" min="1" /></label>
           <label>台词 <input name="text" value="开始吧" /></label>
           <button class="primary" type="submit">创建台词</button>
+          <p></p>
+          <label>台词 ID <input name="dialogueId" type="number" min="1" /></label>
+          <button class="ghost" type="button" id="make-voice">生成配音 WAV</button>
+          <button class="ghost" type="button" id="make-subtitle">生成字幕 SRT</button>
         </form>
         <form id="music-form" class="surface" data-testid="music-form">
           <h3>BGM</h3>
@@ -651,6 +806,16 @@ async function renderAudio() {
     const form = new FormData(event.currentTarget);
     const result = await api(`/projects/${state.projectId}/music-cues`, { method: "POST", body: JSON.stringify({ data: { asset_uri: form.get("assetUri") } }) });
     document.getElementById("audio-result").textContent = `MusicCue 已创建：${result.id}`;
+  });
+  document.getElementById("make-voice").addEventListener("click", async () => {
+    const dialogueId = document.querySelector('#dialogue-form [name="dialogueId"]').value;
+    const result = await api(`/dialogue-lines/${dialogueId}/voice`, { method: "POST", body: JSON.stringify({ data: { voice: "hero-zh" } }) });
+    document.getElementById("audio-result").textContent = `配音已生成：${result.data.audio_uri}`;
+  });
+  document.getElementById("make-subtitle").addEventListener("click", async () => {
+    const dialogueId = document.querySelector('#dialogue-form [name="dialogueId"]').value;
+    const result = await api(`/dialogue-lines/${dialogueId}/subtitle`, { method: "POST", body: JSON.stringify({ data: {} }) });
+    document.getElementById("audio-result").textContent = `字幕已生成：${result.data.srt_uri || result.id}`;
   });
 }
 
@@ -732,6 +897,7 @@ async function renderAI() {
         <label>自定义 Header 名称 <input name="customHeaderName" placeholder="X-API-Key" /></label>
         <label>最大并发 <input name="maxConcurrency" type="number" min="1" value="1" /></label>
         <button class="primary" type="submit">保存 ComfyUI</button>
+        <button class="ghost" type="button" id="check-comfy">健康检查</button>
       </form>
       <form id="workflow-form" class="surface" data-testid="workflow-form">
         <h3>Workflow 模板</h3>
@@ -783,8 +949,19 @@ async function renderAI() {
     });
     localStorage.setItem("md_models_ready", "1");
     document.getElementById("setup-banner").hidden = true;
-    document.getElementById("ai-config-result").textContent = `ComfyUI 已保存：${result.id}`;
-    setStatus("ComfyUI 已保存");
+    const health = await api(`/comfyui/instances/${result.id}/health-check`, { method: "POST" });
+    document.getElementById("ai-config-result").textContent = `ComfyUI 已保存：${result.id} · ${health.status}`;
+    setStatus(health.status === "healthy" ? "ComfyUI 可达" : "ComfyUI 已保存，当前走本地回退");
+  });
+  document.getElementById("check-comfy").addEventListener("click", async () => {
+    const list = await api(`/teams/${state.teamId}/resources?resource_type=comfyui_instance`);
+    if (!list.length) {
+      setStatus("先保存一个 ComfyUI 实例");
+      return;
+    }
+    const health = await api(`/comfyui/instances/${list[0].id}/health-check`, { method: "POST" });
+    document.getElementById("ai-config-result").textContent = `健康检查：${health.status} · ${health.data.health?.mode || ""}`;
+    setStatus(health.status === "healthy" ? "ComfyUI 可达" : "ComfyUI 不可达，执行时回退本地");
   });
   document.getElementById("workflow-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -798,8 +975,9 @@ async function renderAI() {
         published_parameters: { prompt: { node_id: "1", input: "text" } },
       }),
     });
-    document.getElementById("ai-config-result").textContent = `Workflow 已解析：${result.id}`;
-    setStatus("Workflow 已解析");
+    const tested = await api(`/workflows/${result.id}/test-run`, { method: "POST" });
+    document.getElementById("ai-config-result").textContent = `Workflow 已解析并试跑：${tested.status} / ${tested.data.test_run?.mode || "fallback"}`;
+    setStatus("Workflow 已试跑");
   });
 }
 
@@ -810,7 +988,7 @@ async function renderMembers() {
   view.innerHTML = page(
     "Team",
     "成员与权限",
-    "Owner / Admin 可以邀请已注册用户，并改角色。",
+    "Owner / Admin 可以邀请已注册或未注册邮箱。未注册用户会拿到邀请令牌，到登录页接受邀请。",
     `
       <section class="surface">
         <table class="data-table">
@@ -842,7 +1020,9 @@ async function renderMembers() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const result = await api(`/teams/${state.teamId}/members`, { method: "POST", body: JSON.stringify({ email: form.get("email"), role: form.get("role") }) });
-    document.getElementById("member-result").textContent = `已加入：${result.email} / ${result.role}`;
+    document.getElementById("member-result").textContent = result.invite_token
+      ? `已邀请未注册用户 ${result.email}。邀请令牌：${result.invite_token}`
+      : `已加入：${result.email} / ${result.role}`;
     setStatus("成员已邀请");
   });
 }
@@ -850,11 +1030,27 @@ async function renderMembers() {
 async function renderReview() {
   setShell("review");
   await ensureProject();
+  const [clips, comments] = await Promise.all([
+    api(`/projects/${state.projectId}/resources?resource_type=video_clip`),
+    api(`/projects/${state.projectId}/resources?resource_type=review_comment`),
+  ]);
+  const current = clips[0];
   view.innerHTML = page(
     "QC",
     "审核导出",
-    "先出 QC，再创建导出包。客户审片在导出页。",
-    `<section class="surface"><div class="page-actions"><button class="primary" id="qc">创建 QC</button><button class="ghost" id="export">创建导出</button></div></section>`,
+    "先看片段，打时间码批注，再出 QC 和导出包。",
+    `
+      <section class="surface">
+        ${current ? `<video class="player" controls src="/resources/${current.id}/file"></video>` : `<div class="empty">还没有视频片段。先到分格页生成。</div>`}
+        <form id="comment-form">
+          <label>时间码（秒） <input name="timecode" type="number" value="0" /></label>
+          <label>批注 <input name="content" value="检查口型" /></label>
+          <button class="primary" type="submit">添加批注</button>
+        </form>
+        <ul>${comments.map((comment) => `<li>#${comment.id} ${comment.data.content || ""}</li>`).join("")}</ul>
+      </section>
+      <section class="surface"><div class="page-actions"><button class="primary" id="qc">创建 QC</button><button class="ghost" id="export">创建导出</button></div></section>
+    `,
   );
   document.getElementById("qc").addEventListener("click", () =>
     api(`/projects/${state.projectId}/qc-reports`, { method: "POST", body: JSON.stringify({ data: { checks: { video_playable: true } } }) }).then(() => setStatus("QC 已创建")),
@@ -862,6 +1058,23 @@ async function renderReview() {
   document.getElementById("export").addEventListener("click", () =>
     api(`/projects/${state.projectId}/exports`, { method: "POST", body: JSON.stringify({ data: { resolution: "1920x1080" } }) }).then(() => setStatus("导出已创建")),
   );
+  document.getElementById("comment-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!current) return;
+    const form = new FormData(event.currentTarget);
+    await api("/review-comments", {
+      method: "POST",
+      body: JSON.stringify({
+        object_type: "video_clip",
+        object_id: current.id,
+        category: "picture",
+        content: `${form.get("timecode")}s ${form.get("content")}`,
+        severity: "medium",
+      }),
+    });
+    setStatus("批注已添加");
+    await renderReview();
+  });
 }
 
 async function renderDelivery() {
@@ -990,16 +1203,20 @@ async function renderP2() {
 async function renderOps() {
   setShell("ops");
   await ensureProject();
-  const jobs = await api(`/projects/${state.projectId}/ai-jobs`);
+  const [jobs, health] = await Promise.all([api(`/projects/${state.projectId}/ai-jobs`), api("/health")]);
   view.innerHTML = page(
     "Runtime",
     "运维 / Worker",
-    "本地同步 Worker。可以跑 pending、重试和取消。",
+    "文件 SQLite 下后台线程会领取 queued 任务；测试内存库默认同步。",
     `
       <section class="surface">
-        <div class="metric-row"><div class="metric"><b>${jobs.length}</b><span>AI Jobs</span></div></div>
+        <div class="metric-row">
+          <div class="metric"><b>${jobs.length}</b><span>AI Jobs</span></div>
+          <div class="metric"><b>${health.worker}</b><span>Worker</span></div>
+        </div>
         <p></p>
         <button class="primary" id="run-pending">运行 pending jobs</button>
+        <button class="ghost" id="worker-tick">立即领取队列</button>
         ${
           jobs.length
             ? `<table class="data-table"><thead><tr><th>ID</th><th>类型</th><th>状态</th><th></th></tr></thead><tbody>${jobs
@@ -1018,6 +1235,12 @@ async function renderOps() {
   );
   document.getElementById("run-pending").addEventListener("click", () =>
     api(`/projects/${state.projectId}/ai-jobs/run-pending`, { method: "POST" }).then((items) => setStatus(`已处理 ${items.length} 个任务`)),
+  );
+  document.getElementById("worker-tick").addEventListener("click", () =>
+    api("/ops/worker/tick", { method: "POST" }).then((items) => {
+      setStatus(`领取并处理 ${items.length} 个 queued 任务`);
+      renderOps();
+    }),
   );
   document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => api(`/ai-jobs/${button.dataset.run}/run`, { method: "POST" }).then(() => setStatus("任务已运行"))));
   document.querySelectorAll("[data-retry]").forEach((button) => button.addEventListener("click", () => api(`/ai-jobs/${button.dataset.retry}/retry`, { method: "POST" }).then(() => setStatus("任务已重试"))));

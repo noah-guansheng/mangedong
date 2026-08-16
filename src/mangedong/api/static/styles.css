@@ -420,9 +420,51 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
   overflow: hidden;
 }
 
-.preview-frame img, .preview-frame video {
+.preview-frame img, .preview-frame video, .player {
   max-height: 420px;
   max-width: 100%;
+}
+
+.player {
+  background: #111;
+  display: block;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.track-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 72px 1fr;
+  margin: 8px 0;
+}
+
+.track-row span {
+  color: var(--stone);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.track {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  height: 28px;
+  overflow: hidden;
+  position: relative;
+}
+
+.track b, .clip {
+  background: color-mix(in srgb, var(--accent) 18%, white);
+  border: 1px solid var(--accent);
+  bottom: 4px;
+  font-size: 11px;
+  overflow: hidden;
+  padding: 2px 6px;
+  position: absolute;
+  top: 4px;
+  white-space: nowrap;
 }
 
 .auth-gate {
