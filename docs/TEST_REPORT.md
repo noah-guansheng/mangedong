@@ -4,7 +4,7 @@
 
 - 运行命令：`python3 -m pytest`
 - 测试范围：CLI 管道、Web SaaS API、Web 工作台页面
-- 测试结果：14 passed
+- 测试结果：15 passed
 
 ## 自动化测试覆盖
 
@@ -162,21 +162,26 @@
 - Worker 更新任务状态为 succeeded
 - voice_generate job 生成本地 WAV
 - export job 生成本地 ZIP
+- AIJob retry
+- AIJob cancel
+- Audit Events 页面渲染
+- 本地下载 token
+- 本地下载文件读取
 
 ## 最近一次测试输出
 
 ```text
-collected 14 items
+collected 15 items
 
-tests/test_api.py ....                                                   [ 28%]
-tests/test_enhancements.py .                                             [ 35%]
-tests/test_p1_p2.py .                                                    [ 42%]
-tests/test_pages.py ...                                                  [ 64%]
-tests/test_pipeline.py ...                                               [ 85%]
-tests/test_prd_flow.py .                                                 [ 92%]
-tests/test_worker.py .                                                   [100%]
+tests/test_api.py ....                                                   [ 26%]
+tests/test_enhancements.py .                                             [ 33%]
+tests/test_p1_p2.py .                                                    [ 40%]
+tests/test_pages.py ...                                                  [ 60%]
+tests/test_pipeline.py ...                                               [ 80%]
+tests/test_prd_flow.py .                                                 [ 86%]
+tests/test_worker.py ..                                                  [100%]
 
-14 passed
+15 passed
 ```
 
 ## 当前测试结论

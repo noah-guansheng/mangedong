@@ -86,6 +86,7 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `GET /ui/projects/{project_id}/client-review`
 - `GET /ui/projects/{project_id}/errors`
 - `GET /ui/projects/{project_id}/p2-admin`
+- `GET /ui/projects/{project_id}/ops`
 - `POST /auth/register`
 - `POST /auth/login`
 - `GET /auth/me`
@@ -99,6 +100,8 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `POST /projects/{project_id}/assets`
 - `GET /projects/{project_id}/assets`
 - `POST /projects/{project_id}/uploads`
+- `POST /assets/{asset_id}/download-token`
+- `GET /downloads/{download_id}`
 - `POST /projects/{project_id}/imports/manga`
 - `POST /projects/{project_id}/imports/pdf`
 - `POST /projects/{project_id}/chapters`
@@ -116,6 +119,8 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `POST /projects/{project_id}/ai-jobs`
 - `GET /projects/{project_id}/ai-jobs`
 - `POST /ai-jobs/{job_id}/run`
+- `POST /ai-jobs/{job_id}/retry`
+- `POST /ai-jobs/{job_id}/cancel`
 - `POST /projects/{project_id}/ai-jobs/run-pending`
 - `POST /teams/{team_id}/ai-providers`
 - `GET /teams/{team_id}/ai-providers`

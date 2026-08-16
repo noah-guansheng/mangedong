@@ -35,6 +35,7 @@ function renderRoute(route) {
     ai: renderAI,
     review: renderReview,
     p2: renderP2,
+    ops: renderOps,
   };
   return (routes[route] || renderDashboard)();
 }
@@ -213,6 +214,21 @@ async function renderP2() {
     api(`/projects/${state.projectId}/model-training-jobs`, { method: "POST", body: JSON.stringify({ data: { training_type: "character_lora" } }) }).then(() =>
       setStatus("训练任务已创建"),
     ),
+  );
+}
+
+async function renderOps() {
+  await ensureProject();
+  const jobs = await api(`/projects/${state.projectId}/ai-jobs`);
+  view.innerHTML = `
+    <h2>运维 / Worker</h2>
+    <section class="grid">
+      <div class="card"><h3>AI Jobs</h3><p>${jobs.length}</p></div>
+      <button class="primary" id="run-pending">运行 pending jobs</button>
+    </section>
+  `;
+  document.getElementById("run-pending").addEventListener("click", () =>
+    api(`/projects/${state.projectId}/ai-jobs/run-pending`, { method: "POST" }).then((jobs) => setStatus(`已处理 ${jobs.length} 个任务`)),
   );
 }
 

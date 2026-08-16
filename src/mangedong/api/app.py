@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -176,6 +176,35 @@ def create_resource(
     db.commit()
     db.refresh(resource)
     return resource
+
+
+def record_audit_event(
+    db: Session,
+    *,
+    team_id: int,
+    project_id: int | None,
+    actor_id: int,
+    action: str,
+    target_type: str,
+    target_id: int,
+    metadata: dict | None = None,
+) -> ProductionResource:
+    return create_resource(
+        db,
+        team_id=team_id,
+        project_id=project_id,
+        resource_type="audit_event",
+        status="recorded",
+        data={
+            "actor_id": actor_id,
+            "action": action,
+            "target_type": target_type,
+            "target_id": target_id,
+            "metadata": metadata or {},
+            "recorded_at": utc_now().isoformat(),
+        },
+        created_by_id=actor_id,
+    )
 
 
 def list_project_resources(db: Session, project_id: int, resource_type: str) -> list[ProductionResource]:
@@ -413,6 +442,7 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
   <a href="/ui/projects/{project.id}/client-review">客户审片</a>
   <a href="/ui/projects/{project.id}/errors">错误日志</a>
   <a href="/ui/projects/{project.id}/p2-admin">P2 管理</a>
+  <a href="/ui/projects/{project.id}/ops">运维与 Worker</a>
 </section>
 """,
         )
@@ -548,6 +578,24 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
   <div class="card"><h2>Cloud ComfyUI Pools</h2><p>{len(cloud_pools)} pools</p></div>
   <div class="card"><h2>Model Training Jobs</h2><p>{len(training_jobs)} jobs</p></div>
   <div class="card"><h2>Advanced Exports</h2><p>{len(advanced_exports)} packages</p></div>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/ops", response_class=HTMLResponse)
+    def ops_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        jobs = list(db.scalars(select(AIJob).where(AIJob.project_id == project.id).order_by(AIJob.created_at.desc())))
+        audit_events = list_project_resources(db, project.id, "audit_event")
+        return render_page(
+            "运维与 Worker",
+            f"""
+<header><h1>运维与 Worker</h1><p class="muted">{escape(project.name)}</p></header>
+<section class="grid">
+  <div class="card"><h2>AI Jobs</h2><p>{len(jobs)} jobs</p></div>
+  <div class="card"><h2>Audit Events</h2><p>{len(audit_events)} events</p></div>
+  <div class="card"><h2>Worker Mode</h2><p>local synchronous worker</p></div>
 </section>
 """,
         )
@@ -708,6 +756,32 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         db.commit()
         db.refresh(asset)
         return asset
+
+    @api.post("/assets/{asset_id}/download-token", response_model=ProductionResourceRead)
+    def create_download_token(asset_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        asset = db.get(Asset, asset_id)
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Asset not found.")
+        require_project_access(db, current_user.id, asset.project_id)
+        return create_resource(
+            db,
+            team_id=asset.team_id,
+            project_id=asset.project_id,
+            resource_type="download_token",
+            status="active",
+            data={"asset_id": asset.id, "uri": asset.uri, "expires_at": utc_now().timestamp() + 900},
+            created_by_id=current_user.id,
+        )
+
+    @api.get("/downloads/{download_id}")
+    def download_asset(download_id: int, db: DbSession) -> FileResponse:
+        token = get_resource(db, download_id, "download_token")
+        if token.status != "active" or float(token.data["expires_at"]) < utc_now().timestamp():
+            raise HTTPException(status_code=410, detail="Download token expired.")
+        path = Path(token.data["uri"])
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="File not found.")
+        return FileResponse(path)
 
     @api.post("/projects/{project_id}/imports/manga", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     async def import_manga_upload(
@@ -1034,7 +1108,62 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         if job is None:
             raise HTTPException(status_code=404, detail="AI job not found.")
         require_project_access(db, current_user.id, job.project_id, PROJECT_WRITE_ROLES)
-        return process_job(db, job, request.app.state.storage_dir)
+        processed = process_job(db, job, request.app.state.storage_dir)
+        record_audit_event(
+            db,
+            team_id=processed.team_id,
+            project_id=processed.project_id,
+            actor_id=current_user.id,
+            action="ai_job.run",
+            target_type="ai_job",
+            target_id=processed.id,
+        )
+        return processed
+
+    @api.post("/ai-jobs/{job_id}/retry", response_model=AIJobRead)
+    def retry_ai_job(job_id: int, current_user: CurrentUser, db: DbSession) -> AIJob:
+        job = db.get(AIJob, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="AI job not found.")
+        require_project_access(db, current_user.id, job.project_id, PROJECT_WRITE_ROLES)
+        job.status = "queued"
+        job.last_error = None
+        job.lease_owner = None
+        db.commit()
+        db.refresh(job)
+        record_audit_event(
+            db,
+            team_id=job.team_id,
+            project_id=job.project_id,
+            actor_id=current_user.id,
+            action="ai_job.retry",
+            target_type="ai_job",
+            target_id=job.id,
+        )
+        return job
+
+    @api.post("/ai-jobs/{job_id}/cancel", response_model=AIJobRead)
+    def cancel_ai_job(job_id: int, current_user: CurrentUser, db: DbSession) -> AIJob:
+        job = db.get(AIJob, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="AI job not found.")
+        require_project_access(db, current_user.id, job.project_id, PROJECT_WRITE_ROLES)
+        if job.status == "succeeded":
+            raise HTTPException(status_code=409, detail="Succeeded jobs cannot be cancelled.")
+        job.status = "cancelled"
+        job.lease_owner = None
+        db.commit()
+        db.refresh(job)
+        record_audit_event(
+            db,
+            team_id=job.team_id,
+            project_id=job.project_id,
+            actor_id=current_user.id,
+            action="ai_job.cancel",
+            target_type="ai_job",
+            target_id=job.id,
+        )
+        return job
 
     @api.post("/projects/{project_id}/ai-jobs/run-pending", response_model=list[AIJobRead])
     def run_pending_ai_jobs(project_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> list[AIJob]:
@@ -1046,7 +1175,18 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
                 .order_by(AIJob.created_at.asc())
             )
         )
-        return [process_job(db, job, request.app.state.storage_dir) for job in jobs]
+        processed_jobs = [process_job(db, job, request.app.state.storage_dir) for job in jobs]
+        record_audit_event(
+            db,
+            team_id=processed_jobs[0].team_id if processed_jobs else require_project_access(db, current_user.id, project_id).team_id,
+            project_id=project_id,
+            actor_id=current_user.id,
+            action="ai_job.run_pending",
+            target_type="project",
+            target_id=project_id,
+            metadata={"processed_count": len(processed_jobs)},
+        )
+        return processed_jobs
 
     @api.post("/teams/{team_id}/ai-providers", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_ai_provider(

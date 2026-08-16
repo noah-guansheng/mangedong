@@ -13,12 +13,26 @@ def process_job(db: Session, job: AIJob, storage_dir: str | Path) -> AIJob:
         return job
 
     job.status = "running"
+    job.attempt_count += 1
+    job.lease_owner = "local-worker"
+    job.leased_at = utc_now()
     db.commit()
     db.refresh(job)
 
-    output = _run_job(db, job, Path(storage_dir))
+    try:
+        output = _run_job(db, job, Path(storage_dir))
+    except Exception as exc:  # pragma: no cover - exercised through API-level failure states.
+        job.status = "failed"
+        job.last_error = str(exc)
+        job.lease_owner = None
+        db.commit()
+        db.refresh(job)
+        return job
+
     job.output_payload = output
     job.status = "succeeded"
+    job.last_error = None
+    job.lease_owner = None
     db.commit()
     db.refresh(job)
     return job

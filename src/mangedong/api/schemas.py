@@ -240,6 +240,10 @@ class AIJobRead(BaseModel):
     provider: str
     input_payload: dict[str, Any]
     output_payload: dict[str, Any]
+    attempt_count: int
+    last_error: str | None
+    lease_owner: str | None
+    leased_at: datetime | None
     created_by_id: int
     created_at: datetime
 

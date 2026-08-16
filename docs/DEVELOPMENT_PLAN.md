@@ -75,6 +75,12 @@
 - 单任务运行接口
 - 项目 pending jobs 批量运行接口
 - worker 自动化测试
+- AIJob attempt、lease、last_error
+- AIJob retry/cancel
+- 审计事件资源
+- 本地签名下载 token
+- 运维/Worker 页面
+- 生产化 worker/storage 自动化测试
 
 ### 当前 RBAC
 
