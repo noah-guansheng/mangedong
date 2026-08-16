@@ -58,3 +58,7 @@ python3 -m pytest
 - 将 `AlgorithmicColorizer` 替换为漫画上色模型或第三方 API 适配器。
 - 在动画阶段接入图生视频模型，并保留当前帧导出作为降级方案。
 - 为 Web 预览、任务队列、字幕、音轨、角色色板和批量章节处理增加独立模块。
+
+## 产品规划
+
+- [Web SaaS 工作台 PRD 初稿](docs/PRD.md)
