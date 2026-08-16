@@ -4,7 +4,7 @@
 
 - 产品名称：mangedong
 - 产品形态：Web SaaS
-- 文档状态：PRD 初稿 v0.2
+- 文档状态：PRD 初稿 v0.3
 - 目标版本：V1
 - V2 方向：私有化部署、本地网络模型、深度工作流编排、企业级交付
 
@@ -1551,3 +1551,310 @@ V1 至少准备三组样例：
 - 字幕生成
 - 配音生成
 - 商业导出
+
+## 32. 商业模式、套餐与采购路径
+
+V1 不实现完整计费系统，但 PRD 需要明确商业边界，避免架构无法支持后续收费。
+
+### 32.1 ICP
+
+- 漫画工作室：关注批量章节生产、角色一致性、交付效率。
+- 动画外包团队：关注分镜、视频生成、审核和商业交付包。
+- MCN / 短视频团队：关注竖屏导出、字幕、配音、BGM 和批量产能。
+- IP 方：关注授权记录、审片流程、品牌一致性和交付审计。
+- 译制团队：关注中日英 OCR、翻译字幕、多语言配音。
+
+### 32.2 套餐维度预留
+
+- 席位数
+- 项目数
+- 存储空间
+- 每月导出分钟数
+- 并发任务数
+- BYO Provider
+- ComfyUI 实例数量
+- 高级审计包
+- 企业 SLA
+- 私有化部署，V2
+
+### 32.3 采购路径
+
+- 试用团队
+- POC 项目
+- 正式团队空间
+- 企业合同
+- 发票和付款信息
+- 续费和超额用量
+
+V1 可以先实现套餐字段和用量记录，不实现自动扣费。
+
+## 33. 工作室生产流程、RACI 与交接门禁
+
+### 33.1 RACI
+
+| 阶段 | Responsible | Accountable | Consulted | Informed |
+| --- | --- | --- | --- | --- |
+| 项目创建 | Producer | Owner | Admin | Team |
+| 漫画导入 | Producer / Artist | Producer | Reviewer | Team |
+| OCR 校对 | Artist | Producer | Reviewer | Animator |
+| 角色色彩档案 | Artist | Producer | Owner | Animator |
+| 分镜脚本 | Animator | Producer | Reviewer | Artist |
+| 视频生成 | Animator | Producer | Artist | Reviewer |
+| 配音字幕 BGM | Animator | Producer | Reviewer | Owner |
+| 内部审核 | Reviewer | Producer | Artist / Animator | Owner |
+| 客户交付 | Producer | Owner | Reviewer | Team |
+
+### 33.2 交接门禁
+
+- 角色色彩档案 approved 后，才能批量参考上色。
+- 分格顺序 locked 后，才能批量生成镜头脚本。
+- 镜头脚本 locked 后，才能批量生成视频。
+- 视频片段 approved 后，才能进入时间线。
+- 字幕和配音 approved 后，才能执行商业导出。
+- ExportManifest 生成后，交付包进入 frozen 状态。
+
+### 33.3 锁定与解锁
+
+- locked 状态的对象不可被普通成员覆盖。
+- Producer 可以发起解锁。
+- Owner/Admin 可以强制解锁。
+- 解锁、修改、重新锁定必须进入审计日志。
+
+## 34. 项目制作规范：Style Bible / Character Bible / Shot Bible
+
+### 34.1 Style Bible
+
+- 画风参考
+- 色彩风格
+- 光影规则
+- 线稿处理规则
+- 禁用风格
+- 负面示例
+
+### 34.2 Character Bible
+
+- 角色设定图
+- 角色色彩档案
+- 正面/侧面/背面参考
+- 表情参考
+- 服装变化
+- 禁用改动
+
+### 34.3 Shot Bible
+
+- 镜头语言
+- 常用运镜
+- 动作强度
+- 分格转镜头规则
+- 视频提示词模板
+- 负向提示词模板
+
+这些制作规范必须支持版本化、审批、冻结，并被 AI 任务引用。
+
+## 35. 客户审片、返修与验收
+
+### 35.1 审片包
+
+- 内部预览包
+- 客户审片包
+- 最终交付包
+- 归档包
+
+### 35.2 客户审片能力
+
+- 只读审片链接
+- 链接有效期
+- 密码保护
+- 时间码批注
+- 片段级批注
+- 版本对比
+- 返修记录
+- 客户确认状态
+
+### 35.3 状态扩展
+
+- internal_approved
+- client_reviewing
+- client_changes_requested
+- client_approved
+- delivered
+
+内部审核通过不等于客户验收通过。
+
+## 36. 商业导出 Manifest 与合规审计
+
+### 36.1 Manifest 必填字段
+
+```json
+{
+  "project_id": "project_001",
+  "export_id": "export_001",
+  "exported_at": "2026-08-16T00:00:00Z",
+  "exported_by": "user_001",
+  "files": [
+    {
+      "path": "deliverables/final.mp4",
+      "type": "video",
+      "sha256": "..."
+    }
+  ],
+  "workflow_versions": [],
+  "model_snapshots": [],
+  "provider_authorizations": [],
+  "source_assets": [],
+  "review_records": [],
+  "export_settings": {}
+}
+```
+
+### 36.2 合规审计包
+
+- 文件清单和 hash
+- 素材授权证明
+- Provider 商用条款快照
+- 模型和 workflow 版本
+- 生成参数 hash
+- 审核人和审核时间
+- 字幕、配音、BGM 授权状态
+- 导出配置
+
+## 37. 多租户隔离与对象存储安全
+
+### 37.1 强制租户边界
+
+- 所有 API 根据 token 解析 team scope。
+- 所有全局 ID 查询必须二次校验 team_id。
+- 缓存 key 必须包含 team_id。
+- 搜索索引必须包含 team_id。
+- 日志不得泄露其他租户资源 ID。
+- 签名 URL 必须绑定 team_id 和资源 ID。
+
+### 37.2 对象存储规范
+
+```text
+teams/{team_id}/projects/{project_id}/assets/{asset_id}/{version}/file
+teams/{team_id}/projects/{project_id}/exports/{export_id}/package
+```
+
+要求：
+
+- bucket 默认私有。
+- 访问通过短期签名 URL。
+- 上传文件做魔数校验。
+- 大文件上传做分片完整性校验。
+- 文件名防路径穿越。
+- 导出包设置过期时间。
+- 软删除期间禁止新任务引用。
+
+## 38. AI Provider 密钥、授权与数据处理
+
+### 38.1 密钥治理
+
+- BYOK 密钥使用 KMS 加密。
+- 支持密钥版本。
+- 支持密钥轮换。
+- 支持密钥吊销。
+- 前端永不回显密钥明文。
+- 日志必须脱敏。
+- 密钥测试调用进入审计日志。
+
+### 38.2 Provider 合规字段
+
+- 商用授权状态
+- 数据是否用于训练
+- 数据保留期
+- 数据处理区域
+- DPA / 条款链接
+- 内容安全策略
+- 失败是否计费
+
+### 38.3 Provider 降级策略
+
+- 单 Provider 失败时可切换备用 Provider。
+- 切换 Provider 会生成新的任务 attempt。
+- 新 attempt 必须保留原始输入和参数快照。
+- 不同 Provider 生成结果不得覆盖原结果。
+
+## 39. 任务队列可靠性、幂等与公平调度
+
+### 39.1 可靠性要求
+
+- 每个任务有 idempotency_key。
+- Worker 需要 lease 和 heartbeat。
+- 超时任务自动回收。
+- 失败任务进入 dead letter queue。
+- 重试使用指数退避和 jitter。
+- 取消任务必须定义是否清理部分产物。
+
+### 39.2 租户公平调度
+
+- 队列按团队维度限流。
+- 单团队不能耗尽全部 worker。
+- 高优先级任务需要权限。
+- 批量任务默认低优先级。
+- Owner 可以查看团队队列占用。
+
+### 39.3 任务 DAG 一致性
+
+- 下游任务必须引用上游产物版本。
+- 上游产物被替换时，下游任务标记为 stale。
+- 用户重新生成上游产物时，系统提示是否使下游结果失效。
+
+## 40. 可观测性、SLO 与告警
+
+### 40.1 Trace 贯穿
+
+以下字段需要贯穿 API、Worker、Provider、Storage：
+
+- request_id
+- job_id
+- team_id
+- project_id
+- provider_id
+- workflow_version_id
+
+### 40.2 SLO 初稿
+
+- API 可用性：99.5%
+- 任务状态更新延迟：P95 小于 5 秒
+- 导出任务成功率：大于 95%
+- Provider 调用日志完整率：大于 99%
+- ComfyUI 健康检查误报率：小于 1%
+
+### 40.3 告警
+
+- API 错误率异常
+- Worker 队列积压
+- Provider 成功率下降
+- ComfyUI 连接失败率上升
+- 成本异常增长
+- 存储容量异常
+- 跨租户访问拦截
+- 导出失败率异常
+
+## 41. 安全、可靠性与合规测试验收标准
+
+### 41.1 安全测试门槛
+
+- 跨团队 API 越权测试通过
+- 签名 URL 越权测试通过
+- ComfyUI SSRF 绕过测试通过
+- 文件上传类型绕过测试通过
+- API Key 泄露检查通过
+- 权限变更审计检查通过
+
+### 41.2 可靠性测试门槛
+
+- 任务重复提交不会生成重复产物
+- Worker 中断后任务可恢复或失败可重试
+- Provider 超时会进入可解释失败状态
+- ComfyUI 输出拉取失败可补拉
+- 批量任务不会阻塞高优先级任务
+
+### 41.3 合规测试门槛
+
+- 商业导出缺少授权记录时被拦截
+- blocked 授权素材无法导出
+- ExportManifest 字段完整
+- 审核记录完整
+- 删除项目后素材不可被新任务引用
