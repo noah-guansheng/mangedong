@@ -45,6 +45,15 @@ V1 的目标不是做一个单点 AI 工具，而是建立一条可审核、可�
 - 单个分格支持至少一次 AI 分析、一次参考上色、一次视频生成和一次重生成。
 - 项目可以导出包含 MP4、字幕和生成记录的商业交付包。
 
+### 2.3 V1 北极星指标
+
+- 首版视频片段生成成功率：生成任务产出可播放视频的比例。
+- 分格一次审核通过率：生成结果无需重生成即可通过审核的比例。
+- 单分格平均生成成本：按 Provider 费用和平台资源估算。
+- 单分格首版可预览耗时：从提交生成到可播放预览的中位耗时。
+- 项目导出成功率：商业导出任务成功生成完整交付包的比例。
+- Workflow 可用率：上传 workflow 通过解析、绑定和测试运行的比例。
+
 ## 3. 目标用户
 
 ### 3.1 工作室 Owner
@@ -189,6 +198,7 @@ V1 的目标不是做一个单点 AI 工具，而是建立一条可审核、可�
 - 单分格视频生成
 - 视频片段预览和重生成
 - 字幕基础生成
+- TTS 配音
 - BGM 上传和绑定
 - MP4 导出
 - 生成参数与 workflow 版本记录
@@ -199,7 +209,6 @@ V1 的目标不是做一个单点 AI 工具，而是建立一条可审核、可�
 - 分格手动修正
 - 角色色彩档案批量应用
 - 多语言字幕翻译
-- TTS 配音
 - 审核评论
 - 项目级成本统计
 - 导出交付包
@@ -384,7 +393,7 @@ V1 采用团队级 RBAC + 项目成员授权，不做复杂到单个文件的 AC
 - WEBP
 - ZIP
 - CBZ
-- PDF
+- PDF，P1 支持
 
 ### 8.2 导入能力
 
@@ -1007,12 +1016,52 @@ queued/running
 - workflow_templates
 - workflow_versions
 - ai_jobs
+- shots
+- timelines
+- timeline_items
 - video_clips
+- voice_lines
 - voice_tracks
-- subtitles
+- subtitle_cues
 - exports
+- export_manifests
 - review_comments
 - audit_logs
+
+### 19.1 生产对象关系
+
+```text
+Team
+└── Project
+    └── Chapter
+        └── Page
+            └── Panel
+                ├── Shot
+                │   ├── VideoClip
+                │   ├── VoiceLine
+                │   └── SubtitleCue
+                └── ReviewComment
+
+Project
+└── Timeline
+    └── TimelineItem
+        ├── VideoClip
+        ├── VoiceLine
+        ├── SubtitleCue
+        └── BGM Asset
+
+Export
+└── ExportManifest
+```
+
+### 19.2 新增关键对象说明
+
+- Shot：动画镜头，是从 Panel 派生的可生成单元，包含镜头描述、动作描述、时长、提示词。
+- Timeline：项目最终成片时间线，聚合多个视频片段、字幕、配音和 BGM。
+- TimelineItem：时间线上的一个片段，记录起止时间、轨道类型、关联素材。
+- VoiceLine：单句配音，记录角色、语言、文本、声线、音频文件和时间。
+- SubtitleCue：字幕条目，记录语言、文本、起止时间、样式和来源。
+- ExportManifest：商业导出清单，记录最终交付文件、素材来源、参数、模型和审核记录。
 
 ## 20. API 初稿
 
@@ -1041,6 +1090,20 @@ queued/running
 - `POST /projects/{project_id}/imports`
 - `GET /imports/{import_id}`
 
+### Assets
+
+- `GET /projects/{project_id}/assets`
+- `POST /projects/{project_id}/assets`
+- `GET /assets/{asset_id}`
+- `DELETE /assets/{asset_id}`
+
+### References
+
+- `POST /projects/{project_id}/reference-images`
+- `GET /projects/{project_id}/characters`
+- `POST /projects/{project_id}/characters`
+- `PATCH /characters/{character_id}/color-profile`
+
 ### ComfyUI
 
 - `POST /ai/comfyui/instances`
@@ -1058,10 +1121,31 @@ queued/running
 - `POST /panels/{panel_id}/generate-video`
 - `POST /video-clips/{clip_id}/regenerate`
 
+### Jobs
+
+- `GET /jobs`
+- `GET /jobs/{job_id}`
+- `POST /jobs/{job_id}/retry`
+- `POST /jobs/{job_id}/cancel`
+
+### Review
+
+- `POST /review-comments`
+- `PATCH /review-comments/{comment_id}`
+- `POST /video-clips/{clip_id}/approve`
+- `POST /video-clips/{clip_id}/reject`
+
 ### Export
 
 - `POST /projects/{project_id}/exports`
 - `GET /exports/{export_id}`
+
+### Costs
+
+- `GET /teams/{team_id}/costs`
+- `GET /projects/{project_id}/costs`
+- `PATCH /teams/{team_id}/budget`
+- `PATCH /projects/{project_id}/budget`
 
 ## 21. 非功能需求
 
@@ -1196,3 +1280,274 @@ queued/running
 - 商业导出包
 
 交付标准：项目可以导出包含视频、字幕、音频和生成记录的交付包。
+
+## 25. 成本、额度与风控
+
+### 25.1 成本对象
+
+- 团队月预算
+- 项目预算
+- Provider 预算
+- 单任务预估成本
+- 单任务实际成本
+- 失败任务成本
+- 重试任务成本
+
+### 25.2 成本控制规则
+
+- Owner 可以设置团队月预算。
+- Producer 可以设置项目预算。
+- 每个生成任务提交前展示预估成本。
+- 预估成本超过阈值时需要二次确认。
+- 团队预算耗尽后阻止新生成任务。
+- 失败任务是否计费需要按 Provider 规则记录。
+- 所有成本记录必须关联任务、Provider、模型、操作者。
+
+### 25.3 并发和限流
+
+- 团队级并发限制
+- Provider 级并发限制
+- ComfyUI 实例级并发限制
+- 用户级提交频率限制
+- 大批量任务需进入低优先级队列
+
+## 26. 商业版权与合规
+
+### 26.1 素材授权记录
+
+需要记录来源和授权状态：
+
+- 原始漫画
+- 已上色参考图
+- 角色设定图
+- BGM
+- 音效
+- 字体
+- TTS 声音
+- AI Provider
+- ComfyUI workflow
+- 模型权重
+
+### 26.2 商业导出前置检查
+
+导出商业交付包前必须检查：
+
+- 所有视频片段已 approved
+- 所有字幕已 approved
+- 所有配音已 approved
+- 所有 BGM 有来源记录
+- 所有参考图有授权记录
+- Provider 商用授权状态已记录
+- workflow 版本已冻结
+- 生成参数记录完整
+- 审核记录完整
+
+### 26.3 授权状态
+
+- unknown
+- internal_owned
+- licensed
+- public_domain
+- user_provided
+- restricted
+- blocked
+
+状态为 `blocked` 的素材不得进入商业导出。
+
+## 27. 质量分级与导出门槛
+
+### 27.1 质量等级
+
+- A：可商业交付。
+- B：需要轻微修正，不能直接交付。
+- C：必须重生成。
+- D：生成失败或不可用。
+
+### 27.2 自动拦截项
+
+命中以下任一项时不得进入商业导出：
+
+- 视频不可播放
+- 黑屏
+- 花屏
+- 分辨率错误
+- 时长错误
+- 音频缺失
+- 字幕缺失
+- 未通过审核
+- 使用 blocked 授权素材
+- 缺少生成参数记录
+
+### 27.3 人工审核维度
+
+- 角色一致性
+- 色彩一致性
+- 动作合理性
+- 镜头符合度
+- 台词准确性
+- 字幕准确性
+- 配音匹配度
+- BGM 情绪匹配度
+- 商业交付完整性
+
+## 28. 失败恢复与生产连续性
+
+### 28.1 失败恢复能力
+
+- 单任务手动重试
+- 批量失败任务重试
+- 复制参数重跑
+- 切换 Provider 重跑
+- 切换 ComfyUI workflow 重跑
+- 从上一步成功产物继续执行
+- ComfyUI 输出拉取失败后的补拉
+
+### 28.2 依赖任务处理
+
+任务之间存在依赖：
+
+```text
+import → preprocess → ocr → analyze → colorize → video_generate → voice/subtitle/bgm → export
+```
+
+如果上游任务失败：
+
+- 下游任务不得自动执行
+- 用户可以修复上游结果后继续
+- 重新执行上游任务时，需要提示是否覆盖下游结果
+
+### 28.3 失败原因分类
+
+- user_input_error
+- provider_auth_error
+- provider_rate_limited
+- provider_timeout
+- provider_internal_error
+- comfyui_connection_error
+- workflow_parse_error
+- workflow_execution_error
+- output_download_error
+- storage_error
+- unknown_error
+
+## 29. 数据生命周期与安全边界
+
+### 29.1 数据保留
+
+- 原始素材默认长期保留，直到用户删除项目。
+- 中间帧可设置自动清理周期。
+- 失败任务临时文件默认保留 7 天。
+- 导出包可设置过期时间。
+- 删除项目时进入软删除状态，保留恢复窗口。
+
+### 29.2 多租户隔离
+
+- 所有业务表必须包含 team_id。
+- 所有文件路径必须按 team/project 隔离。
+- 后端 API 必须校验用户团队权限。
+- Worker 执行任务时必须校验任务所属团队。
+- Provider 凭证只能被同团队任务读取。
+
+### 29.3 密钥与凭证
+
+- API Key 加密存储。
+- ComfyUI Token 加密存储。
+- 支持手动轮换。
+- 凭证不返回前端明文。
+- 审计日志记录凭证创建、更新、删除操作。
+
+### 29.4 SaaS 调用远程 ComfyUI 安全策略
+
+- 仅允许 HTTPS。
+- 禁止私有 IP。
+- 禁止 localhost。
+- 禁止 link-local 地址。
+- 禁止云 metadata 地址。
+- 限制请求超时。
+- 限制响应体大小。
+- 限制可下载文件类型。
+- 对上传文件做格式和大小校验。
+
+## 30. 可观测性与运营指标
+
+### 30.1 技术监控
+
+- API 错误率
+- Worker 队列长度
+- 任务平均等待时间
+- 任务平均执行时间
+- Provider 成功率
+- ComfyUI 连接成功率
+- ComfyUI workflow 测试通过率
+- 导出成功率
+- 存储用量
+
+### 30.2 产品指标
+
+- 新建团队数
+- 新建项目数
+- 导入章节数
+- 生成视频片段数
+- 审核通过率
+- 重生成率
+- 商业导出次数
+- 人均项目协作人数
+
+### 30.3 运营看板
+
+Owner / Admin 需要看到：
+
+- 本月任务数
+- 本月成本
+- Provider 成本分布
+- 失败任务排行
+- 最常用 workflow
+- 存储占用
+
+## 31. QA 测试计划
+
+### 31.1 功能测试
+
+- 登录、退出、权限隔离
+- 团队成员邀请和角色变更
+- 项目创建和章节导入
+- 页面和分格展示
+- OCR、分析、上色、视频生成任务
+- ComfyUI 实例健康检查
+- workflow 上传、解析、参数编辑、测试运行
+- 配音、字幕、BGM 绑定
+- 审核、重生成、导出
+
+### 31.2 集成测试
+
+- 第三方 AI Provider mock
+- ComfyUI mock server
+- 对象存储 mock
+- 任务队列和 Worker
+- 导出合成链路
+
+### 31.3 安全测试
+
+- 越权访问
+- 跨团队数据读取
+- 文件上传类型绕过
+- ComfyUI SSRF
+- API Key 泄露
+- 大文件滥用
+
+### 31.4 验收样例
+
+V1 至少准备三组样例：
+
+- 中文黑白漫画页
+- 日文黑白漫画页
+- 英文黑白漫画页
+
+每组样例需要覆盖：
+
+- OCR
+- 参考上色
+- 视频生成
+- 字幕生成
+- 配音生成
+- 商业导出
