@@ -32,6 +32,9 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "上色生产" in app_page.text
     assert "Shot / Timeline" in app_page.text
     assert "音频字幕" in app_page.text
+    assert "资源浏览" in app_page.text
+    assert "质量交付" in app_page.text
+    assert "设置" in app_page.text
 
     script = client.get("/static/workbench.js")
     assert script.status_code == 200
@@ -44,7 +47,13 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "shot-form" in script.text
     assert "renderAudio" in script.text
     assert "dialogue-form" in script.text
+    assert "renderResources" in script.text
+    assert "resourceCard" in script.text
     assert "renderAI" in script.text
+    assert "renderDelivery" in script.text
+    assert "review-package-form" in script.text
+    assert "renderSettings" in script.text
+    assert "context-form" in script.text
     assert "renderP2" in script.text
 
 

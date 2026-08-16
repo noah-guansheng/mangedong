@@ -36,10 +36,13 @@ function renderRoute(route) {
     color: renderColor,
     timeline: renderTimeline,
     audio: renderAudio,
+    resources: renderResources,
     ai: renderAI,
     review: renderReview,
+    delivery: renderDelivery,
     p2: renderP2,
     ops: renderOps,
+    settings: renderSettings,
   };
   return (routes[route] || renderDashboard)();
 }
@@ -89,12 +92,31 @@ async function renderDashboard() {
   }
   localStorage.setItem("md_team_id", state.teamId);
   const projects = await api(`/projects?team_id=${state.teamId}`);
+  const projectCards = projects
+    .map(
+      (project) => `
+        <article class="card">
+          <h3>${project.name}</h3>
+          <p class="muted">${project.status}</p>
+          <button class="primary" data-project-id="${project.id}">设为当前项目</button>
+        </article>
+      `,
+    )
+    .join("");
   document.getElementById("dashboard-cards").innerHTML = `
     <article class="card"><h3>团队</h3><p>${state.teamId}</p></article>
     <article class="card"><h3>项目数</h3><p>${projects.length}</p></article>
     <article class="card"><button class="primary" id="create-project">创建默认项目</button></article>
+    ${projectCards}
   `;
   document.getElementById("create-project").addEventListener("click", createDefaultProject);
+  document.querySelectorAll("[data-project-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.projectId = Number(button.dataset.projectId);
+      localStorage.setItem("md_project_id", state.projectId);
+      setStatus(`当前项目：${state.projectId}`);
+    });
+  });
   setStatus("Dashboard 已加载");
 }
 
@@ -297,6 +319,36 @@ async function renderAudio() {
   });
 }
 
+async function renderResources() {
+  await ensureProject();
+  const [assets, chapters, workItems, gates, jobs] = await Promise.all([
+    api(`/projects/${state.projectId}/assets`),
+    api(`/projects/${state.projectId}/chapters`),
+    api(`/projects/${state.projectId}/work-items`),
+    api(`/projects/${state.projectId}/production-gates`),
+    api(`/projects/${state.projectId}/ai-jobs`),
+  ]);
+  view.innerHTML = `
+    <h2>资源浏览</h2>
+    <section class="grid">
+      ${resourceCard("Assets", assets)}
+      ${resourceCard("Chapters", chapters)}
+      ${resourceCard("Work Items", workItems)}
+      ${resourceCard("Production Gates", gates)}
+      ${resourceCard("AI Jobs", jobs)}
+    </section>
+  `;
+  setStatus("资源浏览已加载");
+}
+
+function resourceCard(title, items) {
+  const rows = items
+    .slice(0, 5)
+    .map((item) => `<li>#${item.id} ${item.name || item.title || item.job_type || item.gate_type || item.status}</li>`)
+    .join("");
+  return `<article class="card"><h3>${title}</h3><p>${items.length} items</p><ul>${rows}</ul></article>`;
+}
+
 async function renderAI() {
   await ensureProject();
   view.innerHTML = `
@@ -348,6 +400,41 @@ async function renderReview() {
   );
 }
 
+async function renderDelivery() {
+  await ensureProject();
+  view.innerHTML = `
+    <h2>质量交付</h2>
+    <form id="review-package-form" data-testid="review-package-form">
+      <label>包类型 <input name="packageType" value="client_review" /></label>
+      <button class="primary" type="submit">创建审片包</button>
+    </form>
+    <form id="advanced-export-form" data-testid="advanced-export-form">
+      <label>Export ID <input name="exportId" type="number" min="1" /></label>
+      <label>格式 <input name="format" value="prores" /></label>
+      <button class="primary" type="submit">生成高级格式</button>
+    </form>
+    <div id="delivery-result" class="card"></div>
+  `;
+  document.getElementById("review-package-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/projects/${state.projectId}/review-packages`, {
+      method: "POST",
+      body: JSON.stringify({ data: { package_type: form.get("packageType") } }),
+    });
+    document.getElementById("delivery-result").textContent = `审片包已创建：${result.id}`;
+  });
+  document.getElementById("advanced-export-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/exports/${form.get("exportId")}/advanced-format`, {
+      method: "POST",
+      body: JSON.stringify({ data: { format: form.get("format") } }),
+    });
+    document.getElementById("delivery-result").textContent = `高级导出已创建：${result.id}`;
+  });
+}
+
 async function renderP2() {
   await ensureProject();
   view.innerHTML = `
@@ -382,6 +469,29 @@ async function renderOps() {
   document.getElementById("run-pending").addEventListener("click", () =>
     api(`/projects/${state.projectId}/ai-jobs/run-pending`, { method: "POST" }).then((jobs) => setStatus(`已处理 ${jobs.length} 个任务`)),
   );
+}
+
+function renderSettings() {
+  view.innerHTML = `
+    <h2>设置</h2>
+    <form id="context-form" data-testid="context-form">
+      <label>Token <textarea name="token">${state.token}</textarea></label>
+      <label>Team ID <input name="teamId" type="number" value="${state.teamId || ""}" /></label>
+      <label>Project ID <input name="projectId" type="number" value="${state.projectId || ""}" /></label>
+      <button class="primary" type="submit">保存上下文</button>
+    </form>
+  `;
+  document.getElementById("context-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    state.token = String(form.get("token") || "");
+    state.teamId = Number(form.get("teamId") || 0);
+    state.projectId = Number(form.get("projectId") || 0);
+    localStorage.setItem("md_token", state.token);
+    localStorage.setItem("md_team_id", state.teamId);
+    localStorage.setItem("md_project_id", state.projectId);
+    setStatus("上下文已保存");
+  });
 }
 
 renderRoute(state.token ? "dashboard" : "auth");

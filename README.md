@@ -84,10 +84,13 @@ http://localhost:8000/app
 - 上色生产
 - Shot / Timeline
 - 音频字幕
+- 资源浏览
 - AI / ComfyUI
 - 审核导出
+- 质量交付
 - P2 管理
 - 运维 / Worker
+- 设置 / 上下文切换
 
 当前已实现的第一轮 API：
 
