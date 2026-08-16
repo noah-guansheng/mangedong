@@ -79,6 +79,7 @@ http://localhost:8000/app
 
 - 登录 / 注册
 - Dashboard
+- 链路向导
 - 生产工作台
 - 漫画导入
 - 上色生产
@@ -88,6 +89,8 @@ http://localhost:8000/app
 - AI / ComfyUI
 - 审核导出
 - 质量交付
+- 报表
+- 合规下载
 - P2 管理
 - 运维 / Worker
 - 设置 / 上下文切换

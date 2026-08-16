@@ -34,11 +34,16 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "音频字幕" in app_page.text
     assert "资源浏览" in app_page.text
     assert "质量交付" in app_page.text
+    assert "链路向导" in app_page.text
+    assert "报表" in app_page.text
+    assert "合规下载" in app_page.text
     assert "设置" in app_page.text
 
     script = client.get("/static/workbench.js")
     assert script.status_code == 200
     assert "renderDashboard" in script.text
+    assert "renderPipeline" in script.text
+    assert "create-pipeline-work-items" in script.text
     assert "renderImport" in script.text
     assert "manga-import-form" in script.text
     assert "renderColor" in script.text
@@ -52,6 +57,11 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "renderAI" in script.text
     assert "renderDelivery" in script.text
     assert "review-package-form" in script.text
+    assert "renderReports" in script.text
+    assert "Error Logs" in script.text
+    assert "renderCompliance" in script.text
+    assert "download-token-form" in script.text
+    assert "freeze-export-form" in script.text
     assert "renderSettings" in script.text
     assert "context-form" in script.text
     assert "renderP2" in script.text

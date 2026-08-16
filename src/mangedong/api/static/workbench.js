@@ -31,6 +31,7 @@ function renderRoute(route) {
   const routes = {
     auth: renderAuth,
     dashboard: renderDashboard,
+    pipeline: renderPipeline,
     production: renderProduction,
     import: renderImport,
     color: renderColor,
@@ -40,6 +41,8 @@ function renderRoute(route) {
     ai: renderAI,
     review: renderReview,
     delivery: renderDelivery,
+    reports: renderReports,
+    compliance: renderCompliance,
     p2: renderP2,
     ops: renderOps,
     settings: renderSettings,
@@ -169,6 +172,48 @@ async function renderProduction() {
     </section>
   `;
   setStatus("生产工作台已加载");
+}
+
+async function renderPipeline() {
+  await ensureProject();
+  view.innerHTML = `
+    <h2>端到端链路向导</h2>
+    <section class="grid">
+      ${pipelineStep("1", "导入", "上传漫画或 PDF，生成章节、页面、分格")}
+      ${pipelineStep("2", "上色", "执行参考上色、批量上色、局部修正")}
+      ${pipelineStep("3", "Shot", "创建 Shot List 和 Animatic Preview")}
+      ${pipelineStep("4", "音频", "创建台词、配音、字幕、BGM、混音")}
+      ${pipelineStep("5", "审核", "创建审片包、返修、验收和 QC")}
+      ${pipelineStep("6", "导出", "执行 preflight、freeze 和高级格式导出")}
+    </section>
+    <section class="card">
+      <h3>快速生产任务</h3>
+      <button class="primary" id="create-pipeline-work-items">创建默认生产任务</button>
+      <div id="pipeline-result" class="muted"></div>
+    </section>
+  `;
+  document.getElementById("create-pipeline-work-items").addEventListener("click", async () => {
+    const stages = ["import", "color", "shot", "audio", "review", "export"];
+    await Promise.all(
+      stages.map((stage) =>
+        api(`/projects/${state.projectId}/work-items`, {
+          method: "POST",
+          body: JSON.stringify({ title: `${stage} task`, stage, priority: "normal" }),
+        }),
+      ),
+    );
+    document.getElementById("pipeline-result").textContent = "默认生产任务已创建";
+    setStatus("链路任务已创建");
+  });
+}
+
+function pipelineStep(index, title, description) {
+  return `
+    <article class="card">
+      <h3>${index}. ${title}</h3>
+      <p>${description}</p>
+    </article>
+  `;
 }
 
 async function renderImport() {
@@ -432,6 +477,57 @@ async function renderDelivery() {
       body: JSON.stringify({ data: { format: form.get("format") } }),
     });
     document.getElementById("delivery-result").textContent = `高级导出已创建：${result.id}`;
+  });
+}
+
+async function renderReports() {
+  await ensureProject();
+  const [workItems, gates, jobs, errors] = await Promise.all([
+    api(`/projects/${state.projectId}/work-items`),
+    api(`/projects/${state.projectId}/production-gates`),
+    api(`/projects/${state.projectId}/ai-jobs`),
+    api(`/projects/${state.projectId}/error-logs`),
+  ]);
+  const succeededJobs = jobs.filter((job) => job.status === "succeeded").length;
+  view.innerHTML = `
+    <h2>报表看板</h2>
+    <section class="grid">
+      <div class="card"><h3>Work Items</h3><p>${workItems.length}</p></div>
+      <div class="card"><h3>Production Gates</h3><p>${gates.length}</p></div>
+      <div class="card"><h3>AI Jobs</h3><p>${jobs.length}</p><p class="muted">${succeededJobs} succeeded</p></div>
+      <div class="card"><h3>Error Logs</h3><p>${errors.length}</p></div>
+    </section>
+  `;
+  setStatus("报表已加载");
+}
+
+async function renderCompliance() {
+  await ensureProject();
+  view.innerHTML = `
+    <h2>合规下载</h2>
+    <form id="download-token-form" data-testid="download-token-form">
+      <label>Asset ID <input name="assetId" type="number" min="1" /></label>
+      <button class="primary" type="submit">生成下载 Token</button>
+    </form>
+    <form id="freeze-export-form" data-testid="freeze-export-form">
+      <label>Export ID <input name="exportId" type="number" min="1" /></label>
+      <button class="primary" type="submit">Preflight + Freeze</button>
+    </form>
+    <div id="compliance-result" class="card"></div>
+  `;
+  document.getElementById("download-token-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/assets/${form.get("assetId")}/download-token`, { method: "POST" });
+    document.getElementById("compliance-result").innerHTML = `下载链接：<a href="/downloads/${result.id}">/downloads/${result.id}</a>`;
+  });
+  document.getElementById("freeze-export-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const exportId = form.get("exportId");
+    await api(`/exports/${exportId}/preflight`, { method: "POST" });
+    const result = await api(`/exports/${exportId}/freeze`, { method: "POST" });
+    document.getElementById("compliance-result").textContent = `交付包已冻结：${result.data.package_uri}`;
   });
 }
 
