@@ -4,7 +4,7 @@
 
 - 产品名称：mangedong
 - 产品形态：Web SaaS
-- 文档状态：PRD 初稿 v0.3
+- 文档状态：PRD 初稿 v0.4
 - 目标版本：V1
 - V2 方向：私有化部署、本地网络模型、深度工作流编排、企业级交付
 
@@ -185,6 +185,9 @@ V1 的目标不是做一个单点 AI 工具，而是建立一条可审核、可�
 #### P0：没有这些就不能形成 V1 闭环
 
 - 登录、团队、成员角色
+- Project Brief 立项向导
+- WorkItem 制片任务分派
+- ProductionGate 阶段门禁
 - 项目、章节、页面、分格管理
 - 漫画图片/CBZ/ZIP 导入
 - 素材库
@@ -195,11 +198,21 @@ V1 的目标不是做一个单点 AI 工具，而是建立一条可审核、可�
 - OCR 基础能力
 - AI 内容分析基础能力
 - 参考上色基础能力
+- 批量参考上色
 - 单分格视频生成
+- Shot List 镜头脚本工作台
+- Animatic Preview 粗剪预览
+- 最小装配时间线
 - 视频片段预览和重生成
+- 片段 A/B 对比
+- 台词脚本校对
 - 字幕基础生成
 - TTS 配音
 - BGM 上传和绑定
+- 审核评论
+- 项目级成本统计
+- 导出交付包
+- 交付前检查
 - MP4 导出
 - 生成参数与 workflow 版本记录
 
@@ -207,11 +220,8 @@ V1 的目标不是做一个单点 AI 工具，而是建立一条可审核、可�
 
 - PDF 导入
 - 分格手动修正
-- 角色色彩档案批量应用
+- 高级角色色彩档案批量策略
 - 多语言字幕翻译
-- 审核评论
-- 项目级成本统计
-- 导出交付包
 - 错误日志可视化
 
 #### P2：明确进入后续版本
@@ -760,6 +770,55 @@ SaaS 安全要求：
 
 默认只展示基础参数，高级和专家参数需要用户主动展开。
 
+### 13.10 Workflow 兼容性检查
+
+workflow 上传后，系统不仅解析 JSON，还需要检查目标 ComfyUI 实例是否具备运行条件：
+
+- 所需 custom nodes 是否存在
+- checkpoint 是否存在
+- LoRA 是否存在
+- VAE 是否存在
+- ControlNet / IP-Adapter 模型是否存在
+- 输入图片、首帧、尾帧、mask、参考图的尺寸和格式是否符合要求
+- 输出节点是否能生成可下载图片或视频
+- 测试运行是否能产出有效资产
+
+兼容性检查失败时，workflow 不得标记为 production ready。
+
+### 13.11 Published Parameters
+
+模板作者可以决定哪些节点输入暴露给项目成员修改。
+
+每个 Published Parameter 包含：
+
+- 参数 key
+- 显示名称
+- 说明
+- 类型
+- 默认值
+- 最小值/最大值
+- 单位
+- 是否必填
+- 是否允许批量覆盖
+- 关联 node_id 和 input
+
+未发布的节点输入默认锁定，只能在专家模式查看。
+
+### 13.12 变量注入
+
+workflow 参数支持引用生产对象变量：
+
+- `{{shot.prompt}}`
+- `{{shot.negative_prompt}}`
+- `{{shot.duration_seconds}}`
+- `{{character_bible}}`
+- `{{style_bible}}`
+- `{{first_frame}}`
+- `{{last_frame}}`
+- `{{reference_images}}`
+
+变量注入需要在任务提交前渲染，并保存渲染后的参数快照。
+
 ## 14. 视频生成系统
 
 ### 14.1 生成模式
@@ -1004,9 +1063,12 @@ queued/running
 - teams
 - team_members
 - projects
+- project_briefs
 - chapters
 - pages
 - panels
+- work_items
+- production_gates
 - assets
 - reference_images
 - characters
@@ -1020,11 +1082,20 @@ queued/running
 - timelines
 - timeline_items
 - video_clips
+- dialogue_lines
 - voice_lines
 - voice_tracks
+- music_cues
+- audio_mixes
 - subtitle_cues
 - exports
 - export_manifests
+- qc_reports
+- review_packages
+- review_links
+- revision_requests
+- acceptance_records
+- compliance_evidence
 - review_comments
 - audit_logs
 
@@ -1121,6 +1192,30 @@ Export
 - `POST /panels/{panel_id}/generate-video`
 - `POST /video-clips/{clip_id}/regenerate`
 
+### Shots and Timelines
+
+- `POST /projects/{project_id}/shots`
+- `PATCH /shots/{shot_id}`
+- `POST /shots/{shot_id}/lock`
+- `POST /shots/{shot_id}/generate-animatic`
+- `POST /projects/{project_id}/timelines`
+- `PATCH /timelines/{timeline_id}/items/reorder`
+- `PATCH /timeline-items/{item_id}`
+- `POST /timeline-items/{item_id}/replace-clip`
+
+### Dialogue and Audio
+
+- `POST /shots/{shot_id}/dialogue-lines`
+- `PATCH /dialogue-lines/{dialogue_line_id}`
+- `POST /dialogue-lines/{dialogue_line_id}/approve`
+- `POST /voice-lines/{voice_line_id}/generate`
+- `POST /voice-lines/{voice_line_id}/regenerate`
+- `PATCH /subtitle-cues/{subtitle_cue_id}`
+- `POST /projects/{project_id}/music-cues`
+- `PATCH /music-cues/{music_cue_id}`
+- `POST /audio-mixes/{audio_mix_id}/render`
+- `POST /audio-mixes/{audio_mix_id}/approve`
+
 ### Jobs
 
 - `GET /jobs`
@@ -1134,11 +1229,19 @@ Export
 - `PATCH /review-comments/{comment_id}`
 - `POST /video-clips/{clip_id}/approve`
 - `POST /video-clips/{clip_id}/reject`
+- `POST /review-packages`
+- `POST /review-links`
+- `POST /revision-requests`
+- `PATCH /revision-requests/{revision_request_id}`
+- `POST /qc-reports`
+- `POST /acceptance-records`
 
 ### Export
 
 - `POST /projects/{project_id}/exports`
 - `GET /exports/{export_id}`
+- `POST /exports/{export_id}/preflight`
+- `POST /exports/{export_id}/freeze`
 
 ### Costs
 
@@ -1552,6 +1655,21 @@ V1 至少准备三组样例：
 - 配音生成
 - 商业导出
 
+附加验收样例：
+
+- 同一角色跨 5 个分格
+- 同一角色不同表情
+- 一页多人同框
+- 角色与背景色接近
+- 局部修正后再生成视频
+- 竖排日文
+- 跨气泡对白
+- 旁白和拟声词
+- 多人对话说话人归属
+- TTS 多音字或日文假名读音
+- BGM ducking
+- 混音响度 QC
+
 ## 32. 商业模式、套餐与采购路径
 
 V1 不实现完整计费系统，但 PRD 需要明确商业边界，避免架构无法支持后续收费。
@@ -1858,3 +1976,492 @@ teams/{team_id}/projects/{project_id}/exports/{export_id}/package
 - ExportManifest 字段完整
 - 审核记录完整
 - 删除项目后素材不可被新任务引用
+
+## 42. 全链路角色评审结论与体验重整
+
+本轮评审按工作室真实人员链路审查：Owner、Producer、美术/上色、动画/ComfyUI、配音字幕/BGM、审核/客户交付、平台运维/安全。
+
+### 42.1 总体结论
+
+- V1 不能只优先做 AI 生成，必须优先保证工作室生产管理闭环。
+- 单分格直接生成视频过粗，必须加入 Shot List 和 Animatic。
+- 参考上色不能只做单次任务，必须支持批量上色、局部修正、冲突处理和下游 stale 提示。
+- 配音、字幕、BGM 不能只是附加项，必须有台词脚本、声线规范、字幕规范和混音 QC。
+- 审核不能只有 approve/reject，必须覆盖批注、返修、客户验收、QC 和交付冻结。
+- 运维不能只看日志，必须有诊断包、支持授权、告警路由和用户可理解错误。
+
+### 42.2 调整后的 P0 优先策略
+
+P0 优先级从“先把 AI 能力堆满”调整为“先让团队能真实生产和交付”：
+
+- 保留 AI 分析、参考上色、视频生成、ComfyUI。
+- 提升 Project Brief、WorkItem、ProductionGate 为 P0。
+- 提升批量参考上色、Shot List、Animatic、最小装配时间线为 P0。
+- 提升审核评论、项目级成本、导出交付包、交付前检查为 P0。
+- 高级生成能力可以渐进增强，但商业生产门禁不能缺失。
+
+## 43. Project Brief、WorkItem 与 ProductionGate
+
+### 43.1 Project Brief 立项向导
+
+项目从 draft 进入生产前，必须完成立项信息：
+
+- 客户/内部项目
+- IP 名称
+- 章节范围
+- 预计成片时长
+- 目标语言
+- 输出比例
+- 分辨率和 FPS
+- 交付日期
+- 预算上限
+- 授权状态
+- 客户审片方式
+- 验收清单
+
+### 43.2 WorkItem 制片任务
+
+`AIJob` 是后台执行任务，`WorkItem` 是团队协作任务，二者不能混用。
+
+WorkItem 字段：
+
+- 负责人
+- 协作者
+- 阶段
+- 对象范围
+- 截止时间
+- 优先级
+- 阻塞原因
+- 验收清单
+- 关联 AIJob
+- 交接人
+
+### 43.3 ProductionGate 阶段门禁
+
+ProductionGate 字段：
+
+- gate_type
+- scope
+- required_checks
+- required_approvers
+- evidence
+- status
+- approved_by
+- approved_at
+- reopen_reason
+
+商业导出、批量生成、对象锁定必须引用通过的 ProductionGate。
+
+### 43.4 Maker-Checker 规则
+
+- 生成或修改者不能单独批准自己的最终片段。
+- 商业导出至少需要 Producer + Reviewer 或 Owner 的配置化签核。
+- 小团队豁免必须由 Owner 配置，并进入审计日志。
+
+## 44. 美术与参考上色生产台优化
+
+### 44.1 美术工作台交互要求
+
+画布至少支持：
+
+- 原稿、预处理图、上色图、遮罩、视频首帧图层切换
+- 缩放和平移
+- 吸色
+- 色卡面板
+- 角色识别 overlay
+- 分格边界 overlay
+- AI mask overlay
+- split view 对比
+- 前后滑杆对比
+- 问题标注入口
+
+### 44.2 批量参考上色
+
+V1 支持按章节、页面、分格选择范围执行批量参考上色。
+
+批量任务需要：
+
+- 成本预估
+- 参数预检
+- 批量队列
+- 失败项重跑
+- 部分成功保留
+- 批量抽检
+- 批量接受
+- 批量回滚
+
+### 44.3 局部修正与遮罩重生成
+
+流程：
+
+```text
+选择区域或对象
+→ 选择问题类型
+→ 绑定角色/色彩槽
+→ 输入修正说明
+→ 局部重生成
+→ 对比结果
+→ 接受后生成新版本
+```
+
+未接受的局部重生成不得覆盖原图。
+
+### 44.4 参考冲突与色彩审批
+
+参考优先级：
+
+```text
+角色设定图
+→ approved 角色色彩档案
+→ 已上色漫画页
+→ 场景/风格参考
+→ 色卡
+```
+
+同一角色色彩冲突时进入 pending_confirmation，不允许直接批量应用。
+
+### 44.5 上色版本对比
+
+支持：
+
+- A/B 对比
+- 滑杆对比
+- 闪烁对比
+- 局部放大
+- 差异热区
+- 参数 diff
+- 参考源 diff
+- 下游 video_clip / shot / timeline_item 影响提示
+
+## 45. Shot List、Animatic 与最小装配时间线
+
+### 45.1 Shot List 镜头脚本工作台
+
+V1 支持：
+
+- 一个 Panel 拆多个 Shot
+- 多个 Panel 合并为一个 Shot
+- 新增空镜、反应镜头、转场镜头
+- 镜头编号
+- 景别
+- 构图
+- 运镜
+- 动作 beat
+- 角色表演
+- 情绪
+- 时长
+- FPS
+- 帧数
+- 首帧/尾帧
+- 台词关联
+- 字幕关联
+- 参考素材
+- 状态：draft / needs_review / locked / stale / approved
+
+### 45.2 Animatic Preview
+
+在花费高成本 AI 视频生成前，需要先生成低成本 animatic：
+
+- 使用分格图或上色图
+- 设置镜头时长
+- 简单推拉摇移
+- 临时字幕
+- 临时配音
+- 项目级粗剪预览
+
+Animatic 通过后，才能批量进入 AI 视频生成。
+
+### 45.3 最小装配时间线
+
+V1 不做专业 NLE，但必须提供最小装配时间线：
+
+- 按 Shot 顺序自动生成 Timeline
+- 视频轨
+- 字幕轨
+- 配音轨
+- BGM 轨
+- 调整片段顺序
+- 设置 in/out
+- 简单黑场或转场
+- 字幕和配音按 Shot 对齐
+- BGM 起止、音量、ducking
+- 导出前检查所有 TimelineItem 是否 approved 且未 stale
+
+### 45.4 片段对比视图
+
+支持：
+
+- A/B 同步播放
+- 同时间码暂停对比
+- 首帧/中间帧/尾帧缩略图
+- prompt、seed、workflow、参考图、模型、帧数、FPS 参数 diff
+- 从任意历史版本复制参数重跑
+- 切换 seed、prompt、workflow、Provider 重跑
+- approved 版本不得被覆盖
+
+## 46. 台词、配音、字幕、BGM 与混音闭环
+
+### 46.1 DialogueLine 台词脚本
+
+OCR 结果不能直接进入字幕和 TTS，必须先形成可校对台词脚本。
+
+DialogueLine 字段：
+
+- source_panel_id
+- bubble_id
+- speaker_id
+- line_type：dialogue / narration / sfx / thought
+- source_language
+- ocr_text
+- edited_text
+- reading / kana_or_pinyin
+- confidence
+- order_index
+- approved_status
+- locked_at
+
+DialogueScript approved + locked 后，才能批量生成字幕和 TTS。
+
+### 46.2 Voice Bible
+
+Voice Bible 字段：
+
+- voice_profile_id
+- character_id
+- language
+- provider_voice_id
+- age_range
+- timbre
+- speed
+- pitch
+- emotion_range
+- pronunciation_dictionary
+- reference_audio
+- commercial_license_status
+- approved_sample
+
+### 46.3 VoiceLine 表演参数
+
+VoiceLine 需要支持：
+
+- performance_note
+- emotion
+- intensity
+- speed_ratio
+- pitch_shift
+- pause_before_ms
+- pause_after_ms
+- pronunciation_overrides
+- take_number
+- selected_take_id
+- voice_qc_status
+
+### 46.4 字幕规范
+
+字幕配置包含：
+
+- max_chars_per_line
+- max_lines
+- min_duration_ms
+- max_duration_ms
+- reading_speed_cps
+- line_break_policy
+- speaker_label_policy
+- dual_subtitle_layout
+- subtitle_qc_errors
+
+V1 默认支持基于已校对脚本生成项目目标语言字幕；多语言翻译字幕为 P1。
+
+### 46.5 MusicCue 与混音
+
+MusicCue 字段：
+
+- asset_id
+- scene_mood
+- start_time
+- end_time
+- in_point
+- out_point
+- loop_enabled
+- fade_in_ms
+- fade_out_ms
+- target_gain_db
+- ducking_profile
+- license_status
+- approved_status
+
+音频交付标准：
+
+- 48kHz
+- MP4 使用 AAC-LC stereo
+- 可选导出 dialogue/music/effects stems
+- 项目级 loudness target
+- true peak ceiling
+- dialogue intelligibility check
+- no clipping
+- no silence gaps
+
+## 47. 审片、返修、QC 与客户验收闭环
+
+### 47.1 统一审核状态机
+
+```text
+draft
+→ internal_reviewing
+→ internal_changes_requested
+→ internal_approved
+→ qc_pending
+→ qc_passed
+→ client_reviewing
+→ client_changes_requested
+→ client_approved
+→ delivered
+→ archived
+```
+
+### 47.2 批注字段
+
+- object_type
+- object_id
+- version_id
+- timecode_start
+- timecode_end
+- frame
+- region
+- severity
+- category
+- content
+- assignee
+- status：open / fixing / fixed / verified / reopened / wont_fix
+- linked_revision_id
+
+### 47.3 RevisionRequest
+
+返修单聚合多个批注：
+
+- revision_round
+- source_review_package
+- linked_comments
+- scope
+- owner
+- target_version
+- due_at
+- resolution_summary
+- re_review_result
+
+### 47.4 AcceptanceRecord
+
+客户验收记录：
+
+- accepted_package_id
+- accepted_by
+- accepted_at
+- client_role
+- comment
+- ip
+- account_or_email
+- downloadable
+- final_lock
+
+### 47.5 QC Preflight
+
+导出前自动生成 QCReport：
+
+- 视频可播放
+- 分辨率
+- FPS
+- 码率
+- 时长
+- 音频轨
+- 字幕轨
+- 黑屏/花屏
+- 缺失素材
+- 授权状态
+- Manifest 完整性
+
+`qc_failed` 必须阻止客户审片包和最终交付包生成。
+
+## 48. 支持中心、诊断包与用户可理解错误
+
+### 48.1 支持中心
+
+用户可以从以下对象一键创建支持单：
+
+- 任务
+- 导出
+- Provider
+- ComfyUI 实例
+- Workflow
+- 审片包
+
+支持单自动附带脱敏诊断包。
+
+### 48.2 支持访问控制
+
+- 客户授权后，支持人员获得限时只读脱敏访问。
+- 支持人员不得查看明文密钥。
+- 支持访问必须进入审计日志。
+- 授权到期后访问自动失效。
+
+### 48.3 任务排障面板
+
+任务详情页展示：
+
+- 时间线
+- attempt 列表
+- Provider 请求摘要
+- ComfyUI prompt_id
+- 输入文件校验
+- 输出文件校验
+- 错误分类
+- 建议动作
+
+### 48.4 用户可理解错误
+
+所有错误必须映射为用户动作：
+
+- 重试
+- 修改参数
+- 更换 Provider
+- 联系管理员
+- 联系平台支持
+
+工程错误码不得直接作为最终用户文案。
+
+## 49. 审计日志事件模型
+
+### 49.1 审计字段
+
+- actor
+- team_id
+- project_id
+- target_type
+- target_id
+- action
+- before_hash
+- after_hash
+- ip
+- user_agent
+- request_id
+- created_at
+
+### 49.2 审计事件类型
+
+- 安全事件
+- 权限变更
+- 凭证操作
+- 凭证使用摘要
+- 导出下载
+- 审片链接创建
+- 支持访问
+- 批量删除
+- 预算修改
+- 任务执行
+- 对象锁定/解锁
+
+### 49.3 审计要求
+
+- 审计日志 append-only。
+- Owner 可以导出团队审计日志。
+- 高风险审计事件不可被普通管理员删除。
+- 企业高级审计包包含导出、授权、支持访问和凭证操作记录。
