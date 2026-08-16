@@ -42,6 +42,9 @@ def http_json(
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:400]
+        raise ProviderError(f"HTTP {exc.code}: {detail or exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise ProviderError(str(exc.reason if getattr(exc, "reason", None) else exc)) from exc
     if not raw:

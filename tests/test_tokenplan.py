@@ -51,6 +51,8 @@ def test_tokenplan_save_probe_agent_and_skills(client: TestClient, monkeypatch: 
 
     def fake_http(method: str, url: str, *, headers: dict | None = None, body: dict | None = None, timeout: float = 3.0) -> dict:
         calls.append((method, url, dict(headers or {}), body))
+        if url.endswith("/models"):
+            return {"data": [{"id": "qwen3.6-plus"}, {"id": "qwen-image-2.0"}]}
         if url.endswith("/chat/completions"):
             messages = (body or {}).get("messages") or []
             if any(item.get("role") == "tool" for item in messages):
@@ -103,6 +105,7 @@ def test_tokenplan_save_probe_agent_and_skills(client: TestClient, monkeypatch: 
     assert probed["ok"] is True
     assert probed["user_agent"].startswith("QwenCode/")
     assert probed["base_url"].endswith("/compatible-mode/v1")
+    assert probed["model_count"] == 2
 
     project_id = client.post("/projects", json=_project_payload(team_id), headers=_auth(owner)).json()["id"]
     turn = client.post(
@@ -134,7 +137,7 @@ def test_tokenplan_save_probe_agent_and_skills(client: TestClient, monkeypatch: 
     chat_calls = [item for item in calls if item[1].endswith("/chat/completions")]
     assert chat_calls
     assert chat_calls[0][2]["User-Agent"].startswith("QwenCode/")
-    assert "extra_body" in (chat_calls[0][3] or {})
+    assert (chat_calls[0][3] or {}).get("enable_thinking") is True
 
 
 def test_unknown_model_is_rejected() -> None:

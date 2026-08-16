@@ -256,13 +256,34 @@ def probe_tokenplan(config: dict[str, Any], *, transport: JsonTransport | None =
     profile = profile_settings(config)
     model = resolve_outbound_model(str(config.get("text_model") or DEFAULT_TEXT_MODEL), str(config.get("tool_profile") or "qwen-code"))
     try:
+        if profile["protocol"] == "openai":
+            listing = _json_call(
+                "GET",
+                f"{profile['base_url']}/models",
+                headers=tool_headers(config),
+                timeout=12.0,
+                transport=transport,
+            )
+            ids = [str(item.get("id")) for item in (listing.get("data") or []) if isinstance(item, dict) and item.get("id")]
+            return {
+                "ok": True,
+                "mode": "live",
+                "tool_profile": config.get("tool_profile"),
+                "protocol": profile["protocol"],
+                "base_url": profile["base_url"],
+                "user_agent": profile["user_agent"],
+                "model": model,
+                "model_count": len(ids),
+                "models": ids[:16],
+                "preview": f"models {len(ids)}",
+            }
         reply = chat_as_tool(
             config,
             [{"role": "user", "content": "Reply with the single word pong."}],
             model=model,
             max_tokens=16,
             tools=None,
-            timeout=8.0,
+            timeout=25.0,
             transport=transport,
         )
     except Exception as exc:
@@ -490,8 +511,9 @@ def _openai_chat(
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
-    if str(config.get("tool_profile") or "") == "qwen-code" and model.startswith("qwen3."):
-        body["extra_body"] = {"enable_thinking": True}
+    if model.startswith("qwen3."):
+        # Probe and short pings must turn thinking off; qwen3.6-plus otherwise spends ~7s+ and trips the old 8s timeout.
+        body["enable_thinking"] = bool(tools)
     result = _json_call(
         "POST",
         f"{profile['base_url']}/chat/completions",
