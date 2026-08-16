@@ -38,7 +38,8 @@ def test_prd_p0_workflow_from_provider_to_frozen_export(client: TestClient) -> N
     )
     assert comfyui.status_code == 201
     health = client.post(f"/comfyui/instances/{comfyui.json()['id']}/health-check", headers=_auth(token))
-    assert health.json()["status"] == "healthy"
+    assert health.json()["status"] in {"healthy", "fallback"}
+    assert health.json()["data"]["health"]["checked_at"]
 
     workflow = client.post(
         f"/projects/{project_id}/workflows",

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Generator
+from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
 from typing import Annotated
@@ -40,15 +42,19 @@ from mangedong.api.schemas import (
     ChapterRead,
     ComfyUIInstanceCreate,
     DialogueLineCreate,
+    InviteAccept,
     PageCreate,
     PageRead,
     PanelCreate,
     PanelRead,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     ProductionResourceRead,
     ProductionGateCreate,
     ProductionGateRead,
     ProjectCreate,
     ProjectRead,
+    ProjectUpdate,
     ProviderCreate,
     ResourcePayload,
     ReviewCommentCreate,
@@ -67,10 +73,13 @@ from mangedong.api.schemas import (
     WorkflowCreate,
     WorkItemCreate,
     WorkItemRead,
+    WorkItemUpdate,
 )
+from mangedong.api.providers import ProviderError, chat_complete, comfyui_credentials, probe_comfyui, provider_credentials, run_comfyui_prompt
+from mangedong.api.secrets import encrypt_secret, mask_secret, random_password
 from mangedong.api.security import create_access_token, hash_password, parse_access_token, verify_password
 from mangedong.api.services import project_storage, safe_filename, write_export_package, write_mock_wav, write_srt
-from mangedong.api.worker import process_job
+from mangedong.api.worker import claim_queued_jobs, process_job, run_worker_forever
 from mangedong.colorize import AlgorithmicColorizer
 from mangedong.export import VideoExporter
 from mangedong.importer import import_pages
@@ -145,7 +154,21 @@ def require_panel_access(db: Session, user_id: int, panel_id: int, allowed_roles
     return panel
 
 
-def member_response(member: TeamMember, user: User) -> TeamMemberRead:
+def _provider_text(db: Session, team_id: int, secret_key: str, prompt: str) -> tuple[str, str]:
+    for provider in list_team_resources(db, team_id, "ai_provider"):
+        try:
+            base_url, api_key, model = provider_credentials(provider.data, secret_key)
+            if not base_url or not api_key:
+                continue
+            text = chat_complete(base_url, api_key, model=model, prompt=prompt)
+            if text:
+                return text, "live"
+        except Exception:
+            continue
+    return "", "fallback"
+
+
+def member_response(member: TeamMember, user: User, invite_token: str | None = None) -> TeamMemberRead:
     return TeamMemberRead(
         id=member.id,
         team_id=member.team_id,
@@ -154,6 +177,7 @@ def member_response(member: TeamMember, user: User) -> TeamMemberRead:
         display_name=user.display_name,
         role=member.role,  # type: ignore[arg-type]
         created_at=member.created_at,
+        invite_token=invite_token,
     )
 
 
@@ -208,6 +232,42 @@ def record_audit_event(
         },
         created_by_id=actor_id,
     )
+
+
+def _write_ken_burns_mp4(
+    storage_dir: Path,
+    project_id: int,
+    stem: str,
+    image,
+    *,
+    duration: float = 3.0,
+    fps: int = 8,
+    width: int = 480,
+) -> tuple[Path, int]:
+    frame_dir = project_storage(storage_dir, project_id, "frames", stem) / "frames"
+    frame_paths = KenBurnsAnimator(duration_seconds=duration, fps=fps, width=width).render_frames(image, frame_dir, stem)
+    output_path = project_storage(storage_dir, project_id, "videos", f"{stem}.mp4")
+    VideoExporter().export(frame_paths, output_path, fps=fps)
+    return output_path, len(frame_paths)
+
+
+def _panel_still(db: Session, panel: Panel):
+    from PIL import Image
+
+    colorization = next(
+        (
+            resource
+            for resource in list_project_resources(db, panel.project_id, "colorization")
+            if resource.data.get("panel_id") == panel.id
+        ),
+        None,
+    )
+    if colorization is not None:
+        return Image.open(colorization.data["output_asset_uri"]).convert("RGB")
+    page = db.get(MangaPage, panel.page_id)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Page not found.")
+    return AlgorithmicColorizer().colorize(Image.open(page.image_uri).convert("RGB"))
 
 
 def list_project_resources(db: Session, project_id: int, resource_type: str) -> list[ProductionResource]:
@@ -310,20 +370,43 @@ def require_cookie_user(request: Request, db: Session) -> User:
 
 
 def create_app(database_url: str | None = None, secret_key: str | None = None, storage_dir: str | Path | None = None) -> FastAPI:
-    session_factory = build_session_factory(database_url or os.getenv("MANGEDONG_DATABASE_URL", DEFAULT_DATABASE_URL))
+    resolved_database_url = database_url or os.getenv("MANGEDONG_DATABASE_URL", DEFAULT_DATABASE_URL)
+    session_factory = build_session_factory(resolved_database_url)
     init_db(session_factory)
+    resolved_storage = Path(storage_dir or os.getenv("MANGEDONG_STORAGE_DIR", "./mangedong_storage")).resolve()
+    resolved_storage.mkdir(parents=True, exist_ok=True)
+    worker_env = os.getenv("MANGEDONG_WORKER")
+    if worker_env is None:
+        worker_enabled = resolved_database_url not in {"sqlite://", "sqlite:///:memory:"}
+    else:
+        worker_enabled = worker_env.lower() not in {"0", "false", "off"}
 
-    api = FastAPI(title="mangedong Web SaaS API", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        stop = threading.Event()
+        app.state.worker_stop = stop
+        worker: threading.Thread | None = None
+        if app.state.worker_enabled:
+            worker = threading.Thread(
+                target=run_worker_forever,
+                args=(app.state.session_factory, app.state.storage_dir, stop),
+                daemon=True,
+            )
+            worker.start()
+        yield
+        stop.set()
+
+    api = FastAPI(title="mangedong Web SaaS API", version="0.1.0", lifespan=lifespan)
     api.state.session_factory = session_factory
     api.state.secret_key = secret_key or os.getenv("MANGEDONG_SECRET_KEY", "dev-secret-change-me")
-    api.state.storage_dir = Path(storage_dir or os.getenv("MANGEDONG_STORAGE_DIR", "./mangedong_storage")).resolve()
-    api.state.storage_dir.mkdir(parents=True, exist_ok=True)
+    api.state.storage_dir = resolved_storage
+    api.state.worker_enabled = worker_enabled
     static_dir = Path(__file__).parent / "static"
     api.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @api.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "worker": "running" if api.state.worker_enabled else "disabled"}
 
     @api.get("/app", response_class=HTMLResponse)
     def workbench_app() -> HTMLResponse:
@@ -678,6 +761,41 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     def logout() -> dict[str, bool]:
         return {"ok": True}
 
+    @api.post("/auth/forgot-password")
+    def forgot_password(payload: PasswordResetRequest, request: Request, db: DbSession) -> dict[str, object]:
+        user = db.scalar(select(User).where(User.email == payload.email.lower()))
+        result: dict[str, object] = {"ok": True}
+        if user is not None:
+            result["reset_token"] = create_access_token(
+                user.id, request.app.state.secret_key, ttl_seconds=60 * 60, token_type="reset"
+            )
+        return result
+
+    @api.post("/auth/reset-password")
+    def reset_password(payload: PasswordResetConfirm, request: Request, db: DbSession) -> dict[str, bool]:
+        token_payload = parse_access_token(payload.token, request.app.state.secret_key, expected_type="reset")
+        if token_payload is None:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
+        user = db.get(User, token_payload.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+        user.password_hash = hash_password(payload.password)
+        db.commit()
+        return {"ok": True}
+
+    @api.post("/auth/accept-invite", response_model=TokenResponse)
+    def accept_invite(payload: InviteAccept, request: Request, db: DbSession) -> TokenResponse:
+        token_payload = parse_access_token(payload.token, request.app.state.secret_key, expected_type="invite")
+        if token_payload is None:
+            raise HTTPException(status_code=400, detail="Invalid or expired invite token.")
+        user = db.get(User, token_payload.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+        user.password_hash = hash_password(payload.password)
+        user.display_name = payload.display_name
+        db.commit()
+        return TokenResponse(access_token=create_access_token(user.id, request.app.state.secret_key))
+
     @api.post("/teams", response_model=TeamRead, status_code=status.HTTP_201_CREATED)
     def create_team(payload: TeamCreate, current_user: CurrentUser, db: DbSession) -> Team:
         team = Team(name=payload.name, created_by_id=current_user.id)
@@ -703,13 +821,22 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     def add_team_member(
         team_id: int,
         payload: TeamMemberCreate,
+        request: Request,
         current_user: CurrentUser,
         db: DbSession,
     ) -> TeamMemberRead:
         require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
         user = db.scalar(select(User).where(User.email == payload.email.lower()))
+        invite_token = None
         if user is None:
-            raise HTTPException(status_code=404, detail="User not found.")
+            user = User(
+                email=payload.email.lower(),
+                display_name=payload.email.split("@")[0],
+                password_hash=hash_password(random_password() + "9a"),
+            )
+            db.add(user)
+            db.flush()
+            invite_token = create_access_token(user.id, request.app.state.secret_key, ttl_seconds=60 * 60 * 24 * 7, token_type="invite")
         member = TeamMember(team_id=team_id, user_id=user.id, role=payload.role)
         db.add(member)
         try:
@@ -718,7 +845,7 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             db.rollback()
             raise HTTPException(status_code=409, detail="User is already a team member.") from exc
         db.refresh(member)
-        return member_response(member, user)
+        return member_response(member, user, invite_token)
 
     @api.get("/teams/{team_id}/members", response_model=list[TeamMemberRead])
     def list_team_members(team_id: int, current_user: CurrentUser, db: DbSession) -> list[TeamMemberRead]:
@@ -786,6 +913,19 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found.")
         require_team_membership(db, current_user.id, project.team_id)
+        return project
+
+    @api.patch("/projects/{project_id}", response_model=ProjectRead)
+    def update_project(project_id: int, payload: ProjectUpdate, current_user: CurrentUser, db: DbSession) -> Project:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        if payload.name:
+            project.name = payload.name
+        if payload.status:
+            project.status = payload.status
+        if payload.brief is not None:
+            project.brief = payload.brief.model_dump(mode="json")
+        db.commit()
+        db.refresh(project)
         return project
 
     @api.post("/projects/{project_id}/assets", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
@@ -1212,6 +1352,22 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         require_project_access(db, current_user.id, project_id)
         return list(db.scalars(select(WorkItem).where(WorkItem.project_id == project_id).order_by(WorkItem.created_at.desc())))
 
+    @api.patch("/work-items/{work_item_id}", response_model=WorkItemRead)
+    def update_work_item(work_item_id: int, payload: WorkItemUpdate, current_user: CurrentUser, db: DbSession) -> WorkItem:
+        work_item = db.get(WorkItem, work_item_id)
+        if work_item is None:
+            raise HTTPException(status_code=404, detail="Work item not found.")
+        require_project_access(db, current_user.id, work_item.project_id, PROJECT_WRITE_ROLES)
+        if payload.status:
+            work_item.status = payload.status
+        if payload.priority:
+            work_item.priority = payload.priority
+        if payload.assignee_id is not None:
+            work_item.assignee_id = payload.assignee_id
+        db.commit()
+        db.refresh(work_item)
+        return work_item
+
     @api.post("/projects/{project_id}/production-gates", response_model=ProductionGateRead, status_code=status.HTTP_201_CREATED)
     def create_production_gate(
         project_id: int,
@@ -1361,21 +1517,32 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         )
         return processed_jobs
 
+    @api.post("/ops/worker/tick", response_model=list[AIJobRead])
+    def worker_tick(request: Request, current_user: CurrentUser, db: DbSession) -> list[AIJob]:
+        _ = current_user
+        return claim_queued_jobs(db, request.app.state.storage_dir)
+
     @api.post("/teams/{team_id}/ai-providers", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_ai_provider(
         team_id: int,
         payload: ProviderCreate,
+        request: Request,
         current_user: CurrentUser,
         db: DbSession,
     ) -> ProductionResource:
         require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        data = payload.model_dump(mode="json")
+        config = dict(data.get("config") or {})
+        if config.get("api_key"):
+            config["api_key"] = encrypt_secret(str(config["api_key"]), request.app.state.secret_key)
+            data["config"] = config
         return create_resource(
             db,
             team_id=team_id,
             project_id=None,
             resource_type="ai_provider",
             status="active",
-            data=payload.model_dump(mode="json"),
+            data=data,
             created_by_id=current_user.id,
         )
 
@@ -1388,11 +1555,14 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     def create_comfyui_instance(
         team_id: int,
         payload: ComfyUIInstanceCreate,
+        request: Request,
         current_user: CurrentUser,
         db: DbSession,
     ) -> ProductionResource:
         require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
         instance_data = payload.model_dump(mode="json")
+        if instance_data.get("token"):
+            instance_data["token"] = encrypt_secret(str(instance_data["token"]), request.app.state.secret_key)
         instance_data["health"] = {"status": "unchecked"}
         return create_resource(
             db,
@@ -1431,11 +1601,18 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         )
 
     @api.post("/comfyui/instances/{instance_id}/health-check", response_model=ProductionResourceRead)
-    def check_comfyui_instance(instance_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def check_comfyui_instance(instance_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         instance = get_resource(db, instance_id, "comfyui_instance")
         require_team_role(db, current_user.id, instance.team_id, MANAGE_TEAM_ROLES)
-        instance.data = {**instance.data, "health": {"status": "ok", "checked_at": utc_now().isoformat()}}
-        instance.status = "healthy"
+        base_url, token, auth_type = comfyui_credentials(instance.data, request.app.state.secret_key)
+        try:
+            probe = probe_comfyui(base_url, token, auth_type)
+            instance.status = "healthy"
+            health = {"status": "ok", "mode": "live", "checked_at": utc_now().isoformat(), "payload": probe.get("payload")}
+        except ProviderError as exc:
+            instance.status = "fallback"
+            health = {"status": "unreachable", "mode": "fallback", "checked_at": utc_now().isoformat(), "error": str(exc)}
+        instance.data = {**instance.data, "health": health}
         db.commit()
         db.refresh(instance)
         return instance
@@ -1460,15 +1637,31 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         )
 
     @api.post("/workflows/{workflow_id}/test-run", response_model=ProductionResourceRead)
-    def test_run_workflow(workflow_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def test_run_workflow(workflow_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         workflow = get_resource(db, workflow_id, "workflow")
         if workflow.project_id is None:
             raise HTTPException(status_code=400, detail="Workflow is not project scoped.")
         require_project_access(db, current_user.id, workflow.project_id, PROJECT_WRITE_ROLES)
+        mode = "fallback"
+        error = None
+        instances = list_team_resources(db, workflow.team_id, "comfyui_instance")
+        if instances:
+            try:
+                base_url, token, auth_type = comfyui_credentials(instances[0].data, request.app.state.secret_key)
+                run_comfyui_prompt(base_url, workflow.data.get("workflow_json") or {}, token=token, auth_type=auth_type)
+                mode = "live"
+            except ProviderError as exc:
+                error = str(exc)
         workflow.status = "production_ready"
         workflow.data = {
             **workflow.data,
-            "test_run": {"status": "succeeded", "checked_at": utc_now().isoformat(), "output_type": "mock_asset"},
+            "test_run": {
+                "status": "succeeded",
+                "mode": mode,
+                "error": error,
+                "checked_at": utc_now().isoformat(),
+                "output_type": "mock_asset" if mode == "fallback" else "comfyui",
+            },
         }
         db.commit()
         db.refresh(workflow)
@@ -1577,21 +1770,23 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         )
 
     @api.post("/panels/{panel_id}/ocr", response_model=ProductionResourceRead)
-    def run_panel_ocr(panel_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def run_panel_ocr(panel_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
+        text, mode = _provider_text(db, panel.team_id, request.app.state.secret_key, "Extract dialogue OCR as plain text from this manga panel.")
         return create_resource(
             db,
             team_id=panel.team_id,
             project_id=panel.project_id,
             resource_type="dialogue_line",
             status="ocr_draft",
-            data={"panel_id": panel.id, "ocr_text": "示例台词", "source_language": "zh", "confidence": 0.82},
+            data={"panel_id": panel.id, "ocr_text": text or "示例台词", "source_language": "zh", "confidence": 0.82 if mode == "fallback" else 0.93, "mode": mode},
             created_by_id=current_user.id,
         )
 
     @api.post("/panels/{panel_id}/analyze", response_model=ProductionResourceRead)
-    def analyze_panel(panel_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def analyze_panel(panel_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
+        text, mode = _provider_text(db, panel.team_id, request.app.state.secret_key, "Describe this manga panel as an anime shot: scene, action, camera.")
         return create_resource(
             db,
             team_id=panel.team_id,
@@ -1600,10 +1795,11 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             status="succeeded",
             data={
                 "panel_id": panel.id,
-                "scene": "cinematic manga panel",
+                "scene": text or "cinematic manga panel",
                 "action": "character reacts",
                 "camera": "slow zoom in",
-                "prompt": "anime cinematic shot, clean line art, expressive acting",
+                "prompt": text or "anime cinematic shot, clean line art, expressive acting",
+                "mode": mode,
             },
             created_by_id=current_user.id,
         )
@@ -1706,33 +1902,29 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     @api.post("/panels/{panel_id}/generate-video", response_model=ProductionResourceRead)
     def generate_panel_video(panel_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
-        from PIL import Image
-
-        colorization = next(
-            (
-                resource
-                for resource in list_project_resources(db, panel.project_id, "colorization")
-                if resource.data.get("panel_id") == panel.id
-            ),
-            None,
-        )
-        if colorization is not None:
-            source_image = Image.open(colorization.data["output_asset_uri"]).convert("RGB")
-        else:
-            page = db.get(MangaPage, panel.page_id)
-            if page is None:
-                raise HTTPException(status_code=404, detail="Page not found.")
-            source_image = AlgorithmicColorizer().colorize(Image.open(page.image_uri).convert("RGB"))
         duration = float(payload.data.get("duration_seconds", 3))
         fps = int(payload.data.get("fps", 8))
-        frame_dir = project_storage(request.app.state.storage_dir, panel.project_id, "frames", f"panel-{panel.id}") / "frames"
-        frame_paths = KenBurnsAnimator(duration_seconds=duration, fps=fps, width=int(payload.data.get("width", 480))).render_frames(
+        source_image = _panel_still(db, panel)
+        output_path, frame_count = _write_ken_burns_mp4(
+            request.app.state.storage_dir,
+            panel.project_id,
+            f"panel-{panel.id}",
             source_image,
-            frame_dir,
-            f"panel_{panel.id}",
+            duration=duration,
+            fps=fps,
+            width=int(payload.data.get("width", 480)),
         )
-        output_path = project_storage(request.app.state.storage_dir, panel.project_id, "videos", f"panel-{panel.id}.mp4")
-        VideoExporter().export(frame_paths, output_path, fps=fps)
+        execution_mode = "local_fallback"
+        instances = list_team_resources(db, panel.team_id, "comfyui_instance")
+        if instances:
+            try:
+                base_url, token, auth_type = comfyui_credentials(instances[0].data, request.app.state.secret_key)
+                workflows = list_project_resources(db, panel.project_id, "workflow")
+                workflow_json = workflows[0].data.get("workflow_json") if workflows else {"1": {"class_type": "LoadImage", "inputs": {}}}
+                run_comfyui_prompt(base_url, workflow_json, token=token, auth_type=auth_type)
+                execution_mode = "comfyui_live"
+            except ProviderError:
+                execution_mode = "local_fallback"
         return create_resource(
             db,
             team_id=panel.team_id,
@@ -1741,14 +1933,35 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             status="generated",
             data={
                 "panel_id": panel.id,
-                "provider": payload.data.get("provider", "mock_video"),
+                "provider": payload.data.get("provider", "comfyui"),
                 "output_asset_uri": str(output_path),
                 "duration_seconds": duration,
                 "fps": fps,
-                "frame_count": len(frame_paths),
+                "frame_count": frame_count,
+                "execution_mode": execution_mode,
             },
             created_by_id=current_user.id,
         )
+
+    @api.post("/video-clips/{clip_id}/regenerate", response_model=ProductionResourceRead)
+    def regenerate_video_clip(clip_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        clip = get_resource(db, clip_id, "video_clip")
+        panel_id = int(clip.data.get("panel_id") or 0)
+        return generate_panel_video(panel_id, payload, request, current_user, db)
+
+    @api.get("/resources/{resource_id}/file")
+    def resource_file(resource_id: int, current_user: CurrentUser, db: DbSession) -> FileResponse:
+        resource = get_resource(db, resource_id)
+        if resource.project_id is None:
+            raise HTTPException(status_code=404, detail="Resource file not found.")
+        require_project_access(db, current_user.id, resource.project_id)
+        uri = resource.data.get("output_asset_uri") or resource.data.get("preview_uri") or resource.data.get("audio_uri") or resource.data.get("package_uri")
+        if not uri:
+            raise HTTPException(status_code=404, detail="Resource file not found.")
+        path = Path(str(uri))
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Resource file not found.")
+        return FileResponse(path)
 
     @api.post("/video-clips/{clip_id}/compare", response_model=ProductionResourceRead)
     def compare_video_clips(clip_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
@@ -1786,16 +1999,49 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         )
 
     @api.post("/shots/{shot_id}/generate-animatic", response_model=ProductionResourceRead)
-    def generate_animatic(shot_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def generate_animatic(shot_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         shot = get_resource(db, shot_id, "shot")
         require_project_access(db, current_user.id, shot.project_id or 0, PROJECT_WRITE_ROLES)
+        source_image = None
+        for panel_id in shot.data.get("source_panel_ids") or []:
+            panel = db.get(Panel, int(panel_id))
+            if panel is not None:
+                source_image = _panel_still(db, panel)
+                break
+        if source_image is None:
+            colorizations = list_project_resources(db, shot.project_id or 0, "colorization")
+            if colorizations:
+                from PIL import Image
+
+                source_image = Image.open(colorizations[0].data["output_asset_uri"]).convert("RGB")
+            else:
+                page = db.scalar(select(MangaPage).where(MangaPage.project_id == shot.project_id).order_by(MangaPage.id.asc()))
+                if page is None:
+                    raise HTTPException(status_code=400, detail="No source image available for animatic.")
+                from PIL import Image
+
+                source_image = AlgorithmicColorizer().colorize(Image.open(page.image_uri).convert("RGB"))
+        duration = float(shot.data.get("duration_seconds") or 3)
+        output_path, frame_count = _write_ken_burns_mp4(
+            request.app.state.storage_dir,
+            shot.project_id or 0,
+            f"animatic-{shot.id}",
+            source_image,
+            duration=duration,
+        )
         return create_resource(
             db,
             team_id=shot.team_id,
             project_id=shot.project_id,
             resource_type="animatic",
             status="generated",
-            data={"shot_id": shot.id, "preview_uri": f"mock://animatics/{shot.id}.mp4"},
+            data={
+                "shot_id": shot.id,
+                "preview_uri": str(output_path),
+                "output_asset_uri": str(output_path),
+                "duration_seconds": duration,
+                "frame_count": frame_count,
+            },
             created_by_id=current_user.id,
         )
 

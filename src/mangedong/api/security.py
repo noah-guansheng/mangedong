@@ -17,6 +17,7 @@ PASSWORD_ITERATIONS = 260_000
 class TokenPayload:
     user_id: int
     expires_at: int
+    token_type: str = "access"
 
 
 def hash_password(password: str) -> str:
@@ -47,14 +48,19 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(_b64(candidate), digest)
 
 
-def create_access_token(user_id: int, secret_key: str, ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS) -> str:
-    payload = {"sub": user_id, "exp": int(time.time()) + ttl_seconds}
+def create_access_token(
+    user_id: int,
+    secret_key: str,
+    ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
+    token_type: str = "access",
+) -> str:
+    payload = {"sub": user_id, "exp": int(time.time()) + ttl_seconds, "typ": token_type}
     body = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _sign(body, secret_key)
     return f"{body}.{signature}"
 
 
-def parse_access_token(token: str, secret_key: str) -> TokenPayload | None:
+def parse_access_token(token: str, secret_key: str, expected_type: str = "access") -> TokenPayload | None:
     try:
         body, signature = token.split(".", 1)
     except ValueError:
@@ -68,7 +74,10 @@ def parse_access_token(token: str, secret_key: str) -> TokenPayload | None:
     expires_at = int(payload.get("exp", 0))
     if expires_at < int(time.time()):
         return None
-    return TokenPayload(user_id=int(payload["sub"]), expires_at=expires_at)
+    token_type = str(payload.get("typ", "access"))
+    if token_type != expected_type:
+        return None
+    return TokenPayload(user_id=int(payload["sub"]), expires_at=expires_at, token_type=token_type)
 
 
 def _sign(body: str, secret_key: str) -> str:

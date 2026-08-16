@@ -65,6 +65,34 @@ class TeamMemberRead(BaseModel):
     display_name: str
     role: TeamRole
     created_at: datetime
+    invite_token: str | None = None
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+
+
+class InviteAccept(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    status: str | None = None
+    brief: ProjectBrief | None = None
+
+
+class WorkItemUpdate(BaseModel):
+    status: str | None = None
+    assignee_id: int | None = None
+    priority: Literal["low", "normal", "high", "urgent"] | None = None
 
 
 class ProjectBrief(BaseModel):
