@@ -72,6 +72,9 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 当前已实现的第一轮 API：
 
 - `GET /health`
+- `GET /app`
+- `GET /static/workbench.js`
+- `GET /static/styles.css`
 - `GET /ui/login`
 - `GET /ui/dashboard`
 - `GET /ui/projects?team_id=...`
@@ -112,6 +115,8 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 - `POST /production-gates/{gate_id}/approve`
 - `POST /projects/{project_id}/ai-jobs`
 - `GET /projects/{project_id}/ai-jobs`
+- `POST /ai-jobs/{job_id}/run`
+- `POST /projects/{project_id}/ai-jobs/run-pending`
 - `POST /teams/{team_id}/ai-providers`
 - `GET /teams/{team_id}/ai-providers`
 - `POST /teams/{team_id}/comfyui/instances`

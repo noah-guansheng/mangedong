@@ -23,6 +23,19 @@ def test_login_page_renders_workbench_entry(client: TestClient) -> None:
     assert 'aria-label="login-form"' in response.text
 
 
+def test_spa_workbench_assets_render(client: TestClient) -> None:
+    app_page = client.get("/app")
+    assert app_page.status_code == 200
+    assert 'data-testid="workbench-root"' in app_page.text
+    assert "/static/workbench.js" in app_page.text
+
+    script = client.get("/static/workbench.js")
+    assert script.status_code == 200
+    assert "renderDashboard" in script.text
+    assert "renderAI" in script.text
+    assert "renderP2" in script.text
+
+
 def test_dashboard_projects_and_production_pages_render(client: TestClient) -> None:
     token = _register_and_login(client, "producer@example.com")
     client.cookies.set("md_session", token)

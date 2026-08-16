@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mangedong Web Workbench</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="app" data-testid="workbench-root">
+      <aside class="sidebar">
+        <h1>mangedong</h1>
+        <button data-route="auth">登录</button>
+        <button data-route="dashboard">Dashboard</button>
+        <button data-route="production">生产工作台</button>
+        <button data-route="ai">AI / ComfyUI</button>
+        <button data-route="review">审核导出</button>
+        <button data-route="p2">P2 管理</button>
+      </aside>
+      <section class="workspace">
+        <div id="status" class="status">Ready</div>
+        <div id="view"></div>
+      </section>
+    </main>
+    <script src="/static/workbench.js"></script>
+  </body>
+</html>

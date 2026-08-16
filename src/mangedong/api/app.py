@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -68,6 +69,7 @@ from mangedong.api.schemas import (
 )
 from mangedong.api.security import create_access_token, hash_password, parse_access_token, verify_password
 from mangedong.api.services import project_storage, safe_filename, write_export_package, write_mock_wav, write_srt
+from mangedong.api.worker import process_job
 from mangedong.colorize import AlgorithmicColorizer
 from mangedong.export import VideoExporter
 from mangedong.importer import import_pages
@@ -292,10 +294,16 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     api.state.secret_key = secret_key or os.getenv("MANGEDONG_SECRET_KEY", "dev-secret-change-me")
     api.state.storage_dir = Path(storage_dir or os.getenv("MANGEDONG_STORAGE_DIR", "./mangedong_storage")).resolve()
     api.state.storage_dir.mkdir(parents=True, exist_ok=True)
+    static_dir = Path(__file__).parent / "static"
+    api.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @api.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @api.get("/app", response_class=HTMLResponse)
+    def workbench_app() -> HTMLResponse:
+        return HTMLResponse((Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8"))
 
     @api.get("/ui/login", response_class=HTMLResponse)
     def login_page() -> HTMLResponse:
@@ -1019,6 +1027,26 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     def list_ai_jobs(project_id: int, current_user: CurrentUser, db: DbSession) -> list[AIJob]:
         require_project_access(db, current_user.id, project_id)
         return list(db.scalars(select(AIJob).where(AIJob.project_id == project_id).order_by(AIJob.created_at.desc())))
+
+    @api.post("/ai-jobs/{job_id}/run", response_model=AIJobRead)
+    def run_ai_job(job_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> AIJob:
+        job = db.get(AIJob, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="AI job not found.")
+        require_project_access(db, current_user.id, job.project_id, PROJECT_WRITE_ROLES)
+        return process_job(db, job, request.app.state.storage_dir)
+
+    @api.post("/projects/{project_id}/ai-jobs/run-pending", response_model=list[AIJobRead])
+    def run_pending_ai_jobs(project_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> list[AIJob]:
+        require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        jobs = list(
+            db.scalars(
+                select(AIJob)
+                .where(AIJob.project_id == project_id, AIJob.status.in_(["created", "queued", "failed"]))
+                .order_by(AIJob.created_at.asc())
+            )
+        )
+        return [process_job(db, job, request.app.state.storage_dir) for job in jobs]
 
     @api.post("/teams/{team_id}/ai-providers", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_ai_provider(

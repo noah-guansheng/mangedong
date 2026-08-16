@@ -4,7 +4,7 @@
 
 - 运行命令：`python3 -m pytest`
 - 测试范围：CLI 管道、Web SaaS API、Web 工作台页面
-- 测试结果：12 passed
+- 测试结果：14 passed
 
 ## 自动化测试覆盖
 
@@ -69,6 +69,9 @@
 - 项目生产页渲染 Work Items 区域
 - 项目生产页渲染 Production Gates 区域
 - 项目生产页渲染 AI Jobs 区域
+- `/app` SPA 壳渲染
+- `/static/workbench.js` 加载
+- 前端脚本包含 Dashboard、AI、P2 路由
 
 ### 4. PRD P0 完整链路测试
 
@@ -148,19 +151,32 @@
 - 高级导出格式，并生成本地 ZIP
 - P2 管理页面渲染
 
+### 7. Worker 测试
+
+文件：`tests/test_worker.py`
+
+覆盖内容：
+
+- 创建待处理 AIJob
+- 批量运行 pending jobs
+- Worker 更新任务状态为 succeeded
+- voice_generate job 生成本地 WAV
+- export job 生成本地 ZIP
+
 ## 最近一次测试输出
 
 ```text
-collected 12 items
+collected 14 items
 
-tests/test_api.py ....                                                   [ 33%]
-tests/test_enhancements.py .                                             [ 41%]
-tests/test_p1_p2.py .                                                    [ 50%]
-tests/test_pages.py ..                                                   [ 66%]
-tests/test_pipeline.py ...                                               [ 91%]
-tests/test_prd_flow.py .                                                 [100%]
+tests/test_api.py ....                                                   [ 28%]
+tests/test_enhancements.py .                                             [ 35%]
+tests/test_p1_p2.py .                                                    [ 42%]
+tests/test_pages.py ...                                                  [ 64%]
+tests/test_pipeline.py ...                                               [ 85%]
+tests/test_prd_flow.py .                                                 [ 92%]
+tests/test_worker.py .                                                   [100%]
 
-12 passed
+14 passed
 ```
 
 ## 当前测试结论
@@ -170,6 +186,7 @@ tests/test_prd_flow.py .                                                 [100%]
 - PRD P0 主链路通过端到端 API + 页面自动化测试。
 - 增强项通过 API + 页面自动化测试。
 - P1/P2 scaffold 通过 API + 页面自动化测试。
+- SPA 前端入口和 worker 通过自动化测试。
 - 外部接入使用 mock，但内部功能会生成真实本地产物文件。
 - 既有漫画转动漫 CLI 管道未出现回归。
 - 当前测试不只是接口测试，已包含对应 Web 页面渲染自动化测试。
