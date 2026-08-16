@@ -4,7 +4,7 @@
 
 - 运行命令：`python3 -m pytest`
 - 测试范围：CLI 管道、Web SaaS API、Web 工作台页面
-- 测试结果：19 passed
+- 测试结果：22 passed
 
 ## 自动化测试覆盖
 
@@ -88,6 +88,7 @@
 - 前端脚本包含 ComfyUI 地址、Token、Header、并发配置表单
 - 前端脚本包含 Workflow JSON 上传解析表单
 - 前端脚本包含忘记密码、接受邀请、立项向导、ComfyUI 健康检查、Worker tick、审片播放器
+- 前端脚本包含 SMTP / S3 / 多机队列表单，以及 ComfyUI 内网穿透 URL
 
 ### 8. V1 收口测试
 
@@ -201,11 +202,40 @@
 - 本地下载 token
 - 本地下载文件读取
 
+### 9. 团队基础设施测试
+
+文件：`tests/test_infra.py`
+
+覆盖内容：
+
+- 团队 SMTP 保存、密码脱敏、测试连接失败回退
+- 邀请和忘记密码在 SMTP 不可达时仍返回令牌
+- 团队 memory/S3 配置保存、secret 脱敏
+- 上色产物写入 memory 对象存储并可通过 `/resources/{id}/file` 读取
+- 多机 lease：同一 job 只能被一台 worker 抢走，过期后回收为 queued
+- S3 SigV4 签名头
+- ComfyUI `tunnel_url` 保存，穿透不可达时 health 为 fallback
+
 ## 最近一次测试输出
 
 ```text
-...................                                                      [100%]
-19 passed in 6.75s
+......................                                                   [100%]
+22 passed in 7.85s
+```
+
+现场 API（重启后的 `uvicorn :8000`）额外验证：
+
+```text
+health={"status": "ok", "worker": "running", "worker_id": "cursor:18629", "queue": "database", "lease_ttl_seconds": 45}
+smtp_save=200 password=********
+smtp_probe fallback Connection refused
+invite token=True
+forgot delivery=local_fallback
+storage_save secret=******** backend=memory
+colorize backend=memory uri=memory://teams/3/projects/4/colorized/panel-2.png
+color_file=200 image/png
+comfy tunnel=https://comfy.example.ngrok-free.app health=fallback
+LIVE_INFRA_E2E_OK
 ```
 
 ## 当前测试结论
@@ -220,6 +250,7 @@
 - 既有漫画转动漫 CLI 管道未出现回归。
 - 当前测试不只是接口测试，已包含对应 Web 页面渲染自动化测试。
 - 邀请、重置密码、worker tick、密钥加密、ComfyUI fallback、资源文件播放通过 `tests/test_completion.py`。
+- 团队 SMTP / S3 / 多机 lease 队列通过 `tests/test_infra.py`。
 
 ## 后续测试建议
 
