@@ -9,15 +9,31 @@
 
 ## 一键启动工作台
 
+Windows（双击或在项目目录运行）：
+
+```bat
+start.cmd
+```
+
+也可以：
+
+```bat
+python start.py
+```
+
+macOS / Linux：
+
 ```bash
 chmod +x start.sh
 ./start.sh
 ```
 
-浏览器打开 http://127.0.0.1:8000/app 。脚本会创建 `.venv`、安装依赖并启动 API（文件库 SQLite 下自动带内嵌 Worker）。Windows 用 `start.cmd`。已安装过的环境也可以：
+浏览器打开 http://127.0.0.1:8000/app 。启动器会创建 `.venv`、把 `mangedong` 安装进虚拟环境，再启动 API。不要用系统全局的 `uvicorn` 直接跑，否则会报 `No module named 'mangedong'`。
+
+已安装过的环境也可以：
 
 ```bash
-python3 -m mangedong.cli serve --host 0.0.0.0 --port 8000
+python -m mangedong.cli serve --host 0.0.0.0 --port 8000
 ```
 
 可选把 `.env.example` 复制为 `.env`，填入 Token Plan 席位 Key 等变量。
