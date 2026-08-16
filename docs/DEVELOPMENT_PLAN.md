@@ -95,7 +95,9 @@
 2. 将 ComfyUI 健康检查和 test-run 替换为真实远程调用。
 3. 将本地存储抽象替换为对象存储服务。
 4. 将同步 worker 扩展为真实后台异步 worker。
-5. 将 vanilla JS 工作台升级为设计系统和组件化前端。
+5. 补可视化时间线和客户审片播放器。
+
+真人视角完成度见 `docs/PRD_STATUS.md`。
 
 ## Milestone 2：项目、导入和素材库
 

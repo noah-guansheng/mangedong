@@ -56,6 +56,7 @@ from mangedong.api.schemas import (
     TeamCreate,
     TeamMemberCreate,
     TeamMemberRead,
+    TeamMemberUpdate,
     TeamRead,
     TimelineCreate,
     TimelineItemCreate,
@@ -78,6 +79,7 @@ from mangedong.importer import import_pages
 DEFAULT_DATABASE_URL = "sqlite:///./mangedong.db"
 MANAGE_TEAM_ROLES = {"owner", "admin"}
 PROJECT_WRITE_ROLES = {"owner", "admin", "producer"}
+PRODUCTION_ROLES = {"owner", "admin", "producer", "artist", "animator"}
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -95,9 +97,10 @@ def get_current_user(
     db: DbSession,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> User:
-    if credentials is None:
+    token = credentials.credentials if credentials is not None else request.cookies.get("md_session")
+    if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token.")
-    token_payload = parse_access_token(credentials.credentials, request.app.state.secret_key)
+    token_payload = parse_access_token(token, request.app.state.secret_key)
     if token_payload is None:
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
     user = db.get(User, token_payload.user_id)
@@ -671,6 +674,10 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
     def me(current_user: CurrentUser) -> User:
         return current_user
 
+    @api.post("/auth/logout")
+    def logout() -> dict[str, bool]:
+        return {"ok": True}
+
     @api.post("/teams", response_model=TeamRead, status_code=status.HTTP_201_CREATED)
     def create_team(payload: TeamCreate, current_user: CurrentUser, db: DbSession) -> Team:
         team = Team(name=payload.name, created_by_id=current_user.id)
@@ -723,6 +730,36 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             .order_by(TeamMember.created_at.asc())
         ).all()
         return [member_response(member, user) for member, user in members]
+
+    @api.patch("/teams/{team_id}/members/{member_id}", response_model=TeamMemberRead)
+    def update_team_member(
+        team_id: int,
+        member_id: int,
+        payload: TeamMemberUpdate,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> TeamMemberRead:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        member = db.get(TeamMember, member_id)
+        if member is None or member.team_id != team_id:
+            raise HTTPException(status_code=404, detail="Team member not found.")
+        member.role = payload.role
+        db.commit()
+        db.refresh(member)
+        user = db.get(User, member.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+        record_audit_event(
+            db,
+            team_id=team_id,
+            project_id=None,
+            actor_id=current_user.id,
+            action="member.role_updated",
+            target_type="team_member",
+            target_id=member.id,
+            metadata={"role": payload.role},
+        )
+        return member_response(member, user)
 
     @api.post("/projects", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
     def create_project(payload: ProjectCreate, current_user: CurrentUser, db: DbSession) -> Project:
@@ -970,6 +1007,99 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         db.refresh(chapter)
         return chapter
 
+    @api.get("/projects/{project_id}/structure")
+    def project_structure(project_id: int, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        project = require_project_access(db, current_user.id, project_id)
+        chapters = list(db.scalars(select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.created_at.asc())))
+        pages = list(db.scalars(select(MangaPage).where(MangaPage.project_id == project_id).order_by(MangaPage.page_number.asc())))
+        panels = list(db.scalars(select(Panel).where(Panel.project_id == project_id).order_by(Panel.panel_index.asc())))
+        pages_by_chapter: dict[int, list[MangaPage]] = {}
+        panels_by_page: dict[int, list[Panel]] = {}
+        for page in pages:
+            pages_by_chapter.setdefault(page.chapter_id, []).append(page)
+        for panel in panels:
+            panels_by_page.setdefault(panel.page_id, []).append(panel)
+        return {
+            "project_id": project.id,
+            "name": project.name,
+            "status": project.status,
+            "brief": project.brief,
+            "chapters": [
+                {
+                    "id": chapter.id,
+                    "title": chapter.title,
+                    "status": chapter.status,
+                    "pages": [
+                        {
+                            "id": page.id,
+                            "page_number": page.page_number,
+                            "image_uri": page.image_uri,
+                            "preview_url": f"/pages/{page.id}/preview",
+                            "status": page.status,
+                            "panels": [
+                                {
+                                    "id": panel.id,
+                                    "panel_index": panel.panel_index,
+                                    "bbox": panel.bbox,
+                                    "status": panel.status,
+                                }
+                                for panel in panels_by_page.get(page.id, [])
+                            ],
+                        }
+                        for page in pages_by_chapter.get(chapter.id, [])
+                    ],
+                }
+                for chapter in chapters
+            ],
+        }
+
+    @api.get("/pages/{page_id}/preview")
+    def preview_page(page_id: int, current_user: CurrentUser, db: DbSession) -> FileResponse:
+        page = db.get(MangaPage, page_id)
+        if page is None:
+            raise HTTPException(status_code=404, detail="Page not found.")
+        require_project_access(db, current_user.id, page.project_id)
+        path = Path(page.image_uri)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Page image not found.")
+        return FileResponse(path)
+
+    @api.get("/projects/{project_id}/resources", response_model=list[ProductionResourceRead])
+    def list_typed_project_resources(
+        project_id: int,
+        resource_type: str,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> list[ProductionResource]:
+        require_project_access(db, current_user.id, project_id)
+        return list_project_resources(db, project_id, resource_type)
+
+    @api.get("/teams/{team_id}/resources", response_model=list[ProductionResourceRead])
+    def list_typed_team_resources(
+        team_id: int,
+        resource_type: str,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> list[ProductionResource]:
+        require_team_membership(db, current_user.id, team_id)
+        return list_team_resources(db, team_id, resource_type)
+
+    @api.get("/projects/{project_id}/costs")
+    def project_costs(project_id: int, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_project_access(db, current_user.id, project_id)
+        jobs = list(db.scalars(select(AIJob).where(AIJob.project_id == project_id)))
+        by_type: dict[str, int] = {}
+        for job in jobs:
+            by_type[job.job_type] = by_type.get(job.job_type, 0) + 1
+        unit_cost = 0.12
+        return {
+            "currency": "USD",
+            "job_count": len(jobs),
+            "estimated_cost": round(len(jobs) * unit_cost, 2),
+            "unit_cost": unit_cost,
+            "by_job_type": by_type,
+        }
+
     @api.get("/projects/{project_id}/chapters", response_model=list[ChapterRead])
     def list_chapters(project_id: int, current_user: CurrentUser, db: DbSession) -> list[Chapter]:
         require_project_access(db, current_user.id, project_id)
@@ -1040,7 +1170,7 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
 
     @api.patch("/panels/{panel_id}/manual-correction", response_model=PanelRead)
     def correct_panel(panel_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> Panel:
-        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
         if "bbox" in payload.data:
             panel.bbox = payload.data["bbox"]
         panel.status = payload.data.get("status", "manually_corrected")
@@ -1448,7 +1578,7 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
 
     @api.post("/panels/{panel_id}/ocr", response_model=ProductionResourceRead)
     def run_panel_ocr(panel_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
-        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
         return create_resource(
             db,
             team_id=panel.team_id,
@@ -1461,7 +1591,7 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
 
     @api.post("/panels/{panel_id}/analyze", response_model=ProductionResourceRead)
     def analyze_panel(panel_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
-        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
         return create_resource(
             db,
             team_id=panel.team_id,
@@ -1480,7 +1610,7 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
 
     @api.post("/panels/{panel_id}/colorize", response_model=ProductionResourceRead)
     def colorize_panel(panel_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
-        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
         page = db.get(MangaPage, panel.page_id)
         if page is None:
             raise HTTPException(status_code=404, detail="Page not found.")
@@ -1575,7 +1705,7 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
 
     @api.post("/panels/{panel_id}/generate-video", response_model=ProductionResourceRead)
     def generate_panel_video(panel_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
-        panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        panel = require_panel_access(db, current_user.id, panel_id, PRODUCTION_ROLES)
         from PIL import Image
 
         colorization = next(

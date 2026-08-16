@@ -53,6 +53,10 @@ class TeamMemberCreate(BaseModel):
     role: TeamRole
 
 
+class TeamMemberUpdate(BaseModel):
+    role: TeamRole
+
+
 class TeamMemberRead(BaseModel):
     id: int
     team_id: int

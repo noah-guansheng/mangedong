@@ -75,37 +75,25 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 http://localhost:8000/app
 ```
 
-工作台是顶栏 + 分组导航的生产界面，不是侧栏按钮列表。
+工作台是浅色朱红的生产界面：顶栏项目上下文、左侧生产/交付/系统分组。
 
-第三方 **API Key** 和 **ComfyUI 地址** 只在顶栏「配置 AI Key / ComfyUI」或左侧系统组的「AI / ComfyUI」页填写，不在设置页。
+第三方 **API Key** 和 **ComfyUI 地址** 只在顶栏「配置模型」或「模型配置」页填写。
 
-当前 SPA 工作台模块：
+当前 SPA 模块按真人工作流拆分：
 
-- 登录 / 注册
-- Dashboard
-- 链路向导
-- 生产工作台
-- 漫画导入
-- 上色生产
-- Shot / Timeline
-- 音频字幕
-- 资源浏览
-- AI / ComfyUI
-  - 第三方 AI Provider API Key
-  - Provider Base URL / Model / Capabilities
-  - ComfyUI 地址
-  - ComfyUI Token / Header / 并发
-  - Workflow JSON 上传解析
-- 审核导出
-- 质量交付
-- 报表
-- 合规下载
-- P2 管理
-- 运维 / Worker
-- 通知中心
-- 帮助 / 快捷键
-- 设置 / 上下文切换
-- 状态历史
+- 登录工作室
+- 总览
+- 导入
+- 分格工作台（OCR / 分析 / 上色 / 视频）
+- 上色（含参考和角色）
+- 镜头
+- 音频
+- 审片
+- 导出
+- 模型配置
+- 成员
+- 任务
+- 设置
 
 当前已实现的第一轮 API：
 

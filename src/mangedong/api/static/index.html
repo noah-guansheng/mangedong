@@ -21,42 +21,35 @@
           搜索模块
           <kbd>K</kbd>
         </button>
-        <button type="button" class="topbar-cta" data-route="ai">配置 AI Key / ComfyUI</button>
+        <button type="button" class="topbar-cta" data-route="ai">配置模型</button>
         <p id="status" class="status" role="status">Ready</p>
       </header>
 
       <nav class="rail" aria-label="primary">
         <p class="nav-label">生产</p>
-        <button type="button" data-route="dashboard">Dashboard</button>
-        <button type="button" data-route="pipeline">链路向导</button>
-        <button type="button" data-route="production">生产工作台</button>
-        <button type="button" data-route="import">漫画导入</button>
-        <button type="button" data-route="color">上色生产</button>
-        <button type="button" data-route="timeline">Shot / Timeline</button>
-        <button type="button" data-route="audio">音频字幕</button>
+        <button type="button" data-route="dashboard">总览</button>
+        <button type="button" data-route="import">导入</button>
+        <button type="button" data-route="panels">分格</button>
+        <button type="button" data-route="color">上色</button>
+        <button type="button" data-route="timeline">镜头</button>
+        <button type="button" data-route="audio">音频</button>
 
         <p class="nav-label">交付</p>
-        <button type="button" data-route="review">审核导出</button>
-        <button type="button" data-route="delivery">质量交付</button>
-        <button type="button" data-route="compliance">合规下载</button>
-        <button type="button" data-route="resources">资源浏览</button>
+        <button type="button" data-route="review">审片</button>
+        <button type="button" data-route="delivery">导出</button>
 
         <p class="nav-label">系统</p>
-        <button type="button" class="nav-hot" data-route="ai">AI / ComfyUI</button>
-        <button type="button" data-route="reports">报表</button>
-        <button type="button" data-route="ops">运维/Worker</button>
-        <button type="button" data-route="p2">P2 管理</button>
-        <button type="button" data-route="notifications">通知</button>
+        <button type="button" class="nav-hot" data-route="ai">模型配置</button>
+        <button type="button" data-route="members">成员</button>
+        <button type="button" data-route="ops">任务</button>
         <button type="button" data-route="settings">设置</button>
-        <button type="button" data-route="help">帮助</button>
-        <button type="button" data-route="auth">登录</button>
       </nav>
 
       <section class="canvas">
         <aside id="setup-banner" class="setup-banner" hidden>
           <div>
-            <strong>模型还没接上。</strong>
-            第三方 API Key 和 ComfyUI 地址都在「AI / ComfyUI」这一页填写，不在设置里。
+            <strong>还没接模型。</strong>
+            API Key 和 ComfyUI 地址只写在「模型配置」这一页。
           </div>
           <button type="button" class="primary" data-route="ai">去填写</button>
         </aside>

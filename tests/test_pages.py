@@ -28,28 +28,28 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert app_page.status_code == 200
     assert 'data-testid="workbench-root"' in app_page.text
     assert "/static/workbench.js" in app_page.text
-    assert "漫画导入" in app_page.text
-    assert "上色生产" in app_page.text
-    assert "Shot / Timeline" in app_page.text
-    assert "音频字幕" in app_page.text
-    assert "资源浏览" in app_page.text
-    assert "质量交付" in app_page.text
-    assert "链路向导" in app_page.text
-    assert "报表" in app_page.text
-    assert "合规下载" in app_page.text
-    assert "通知" in app_page.text
-    assert "帮助" in app_page.text
+    assert "总览" in app_page.text
+    assert "导入" in app_page.text
+    assert "分格" in app_page.text
+    assert "上色" in app_page.text
+    assert "镜头" in app_page.text
+    assert "音频" in app_page.text
+    assert "审片" in app_page.text
+    assert "导出" in app_page.text
+    assert "模型配置" in app_page.text
+    assert "成员" in app_page.text
+    assert "任务" in app_page.text
     assert "设置" in app_page.text
     assert 'class="topbar"' in app_page.text
     assert 'class="rail"' in app_page.text
-    assert "配置 AI Key / ComfyUI" in app_page.text
+    assert "配置模型" in app_page.text
     assert 'id="command-palette"' in app_page.text
     assert 'id="setup-banner"' in app_page.text
 
     styles = client.get("/static/styles.css")
     assert styles.status_code == 200
-    assert "IBM Plex Sans" in styles.text
-    assert "--accent:" in styles.text
+    assert "#e24b3b" in styles.text
+    assert "--paper:" in styles.text
     assert "Inter" not in styles.text
     assert "#4f46e5" not in styles.text
 
@@ -93,7 +93,15 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "renderP2" in script.text
     assert "就在这一页" in script.text
     assert "auth-gate" in script.text
-    assert "command-palette" in script.text or "openPalette" in script.text
+    assert "openPalette" in script.text
+    assert "renderPanels" in script.text
+    assert "renderMembers" in script.text
+    assert "漫画导入" in script.text
+    assert "上色生产" in script.text
+    assert "Shot / Timeline" in script.text
+    assert "音频字幕" in script.text
+    assert "质量交付" in script.text
+    assert "链路向导" in script.text
 
 
 def test_dashboard_projects_and_production_pages_render(client: TestClient) -> None:

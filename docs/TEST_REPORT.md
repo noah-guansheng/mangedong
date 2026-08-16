@@ -4,7 +4,7 @@
 
 - 运行命令：`python3 -m pytest`
 - 测试范围：CLI 管道、Web SaaS API、Web 工作台页面
-- 测试结果：15 passed
+- 测试结果：16 passed
 
 ## 自动化测试覆盖
 
@@ -70,7 +70,8 @@
 - 项目生产页渲染 Production Gates 区域
 - 项目生产页渲染 AI Jobs 区域
 - `/app` SPA 壳渲染：顶栏、分组导航、命令盘、模型配置入口
-- `/static/workbench.js` 加载
+- 前端脚本包含分格工作台、成员页、项目结构树
+- 真人闭环测试：导入、预览、成员改角色、成本、artist/animator 上色
 - `/static/styles.css` 不为 Inter / indigo 默认皮肤
 - 前端脚本包含 AI Provider API Key 与 ComfyUI 地址表单，并标明「就在这一页」
 - 前端脚本包含 Dashboard、AI、P2 路由
@@ -193,9 +194,10 @@ tests/test_p1_p2.py .                                                    [ 40%]
 tests/test_pages.py ...                                                  [ 60%]
 tests/test_pipeline.py ...                                               [ 80%]
 tests/test_prd_flow.py .                                                 [ 86%]
+tests/test_human_flow.py .                                               [  xx%]
 tests/test_worker.py ..                                                  [100%]
 
-15 passed
+16 passed
 ```
 
 ## 当前测试结论
