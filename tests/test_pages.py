@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -102,6 +103,31 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "renderP2" in script.text
     assert "就在这一页" in script.text
     assert "auth-gate" in script.text
+    assert "hashchange" in script.text
+    assert "#/login" in script.text
+    assert "#/register" in script.text
+    assert "#/forgot" in script.text
+    assert "#/reset" in script.text
+    assert "#/invite" in script.text
+    assert 'id="auth-form"' in script.text
+    assert 'id="register-form"' in script.text
+    assert 'id="forgot-form"' in script.text
+    assert 'id="reset-form"' in script.text
+    assert 'id="invite-form"' in script.text
+    login_fn = script.text.index("function renderLogin")
+    register_fn = script.text.index("function renderRegister")
+    forgot_fn = script.text.index("function renderForgot")
+    reset_fn = script.text.index("function renderReset")
+    invite_fn = script.text.index("function renderInvite")
+    assert login_fn < register_fn < forgot_fn < reset_fn < invite_fn
+    login_block = script.text[login_fn:register_fn]
+    assert 'id="auth-form"' in login_block
+    assert 'id="reset-form"' not in login_block
+    assert 'id="invite-form"' not in login_block
+    assert 'id="forgot-form"' not in login_block
+    mail = (Path(__file__).resolve().parents[1] / "src" / "mangedong" / "api" / "app.py").read_text(encoding="utf-8")
+    assert "/app#/reset?token=" in mail
+    assert "/app#/invite?token=" in mail
     assert "openPalette" in script.text
     assert "renderPanels" in script.text
     assert "renderMembers" in script.text
