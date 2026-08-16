@@ -1,0 +1,13 @@
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.egg-info/
+.venv/
+.env
+
+dist/
+build/
+runs/
+*.mp4
+mangedong.db
+mangedong_storage/

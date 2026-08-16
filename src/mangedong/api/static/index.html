@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mangedong 生产工作台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="app" data-testid="workbench-root" data-mode="auth">
+      <header class="topbar">
+        <a class="brand" href="/app">
+          <span class="brand-mark">MD</span>
+          <span class="brand-name">mangedong</span>
+        </a>
+        <div class="context-strip" aria-label="studio-context">
+          <span class="context-chip" id="team-chip">团队未选择</span>
+          <span class="context-chip" id="project-chip">项目未选择</span>
+        </div>
+        <button type="button" class="ghost" id="open-palette" title="打开命令盘">
+          搜索模块
+          <kbd>K</kbd>
+        </button>
+        <button type="button" class="topbar-cta" data-route="ai">配置模型</button>
+        <p id="status" class="status" role="status">Ready</p>
+      </header>
+
+      <nav class="rail" aria-label="primary">
+        <p class="nav-label">生产</p>
+        <button type="button" data-route="dashboard">总览</button>
+        <button type="button" data-route="import">导入</button>
+        <button type="button" data-route="panels">分格</button>
+        <button type="button" data-route="color">上色</button>
+        <button type="button" data-route="timeline">镜头</button>
+        <button type="button" data-route="audio">音频</button>
+
+        <p class="nav-label">交付</p>
+        <button type="button" data-route="review">审片</button>
+        <button type="button" data-route="delivery">导出</button>
+
+        <p class="nav-label">系统</p>
+        <button type="button" class="nav-hot" data-route="ai">模型配置</button>
+        <button type="button" data-route="agent">制片助手</button>
+        <button type="button" data-route="members">成员</button>
+        <button type="button" data-route="ops">任务</button>
+        <button type="button" data-route="settings">设置</button>
+      </nav>
+
+      <section class="canvas">
+        <aside id="setup-banner" class="setup-banner" hidden>
+          <div>
+            <strong>还没接模型。</strong>
+            API Key 按 Cursor / Qwen Code 方式写在「模型配置」。Token Plan 只给制片助手交互用。
+          </div>
+          <button type="button" class="primary" data-route="ai">去填写</button>
+        </aside>
+        <div id="view"></div>
+        <section id="status-history" class="status-history" aria-label="status-history"></section>
+      </section>
+
+      <dialog id="command-palette" class="palette">
+        <form id="palette-form" method="dialog">
+          <input id="palette-input" type="search" placeholder="跳转到模块，例如 导入、上色、ComfyUI" autocomplete="off" />
+        </form>
+        <ul id="palette-results"></ul>
+      </dialog>
+    </main>
+    <script src="/static/workbench.js"></script>
+  </body>
+</html>

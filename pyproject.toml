@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mangedong"
+version = "0.1.0"
+description = "A manga-to-anime CLI pipeline for importing black-and-white manga pages, colorizing them, animating them, and exporting MP4 videos."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "email-validator",
+  "fastapi",
+  "imageio[ffmpeg]",
+  "numpy",
+  "pillow",
+  "python-multipart",
+  "sqlalchemy",
+  "typer",
+  "uvicorn",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx",
+  "httpx2",
+  "pytest",
+]
+postgres = [
+  "psycopg[binary]",
+]
+
+[project.scripts]
+mangedong = "mangedong.cli:app"
+mangedong-worker = "mangedong.api.worker_main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
