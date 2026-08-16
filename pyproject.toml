@@ -9,14 +9,20 @@ description = "A manga-to-anime CLI pipeline for importing black-and-white manga
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "email-validator",
+  "fastapi",
   "imageio[ffmpeg]",
   "numpy",
   "pillow",
+  "sqlalchemy",
   "typer",
+  "uvicorn",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "httpx",
+  "httpx2",
   "pytest",
 ]
 

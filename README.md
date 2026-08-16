@@ -53,6 +53,35 @@ python3 -m mangedong.cli doctor
 python3 -m pytest
 ```
 
+## Web SaaS API
+
+启动后端 API：
+
+```bash
+python3 -m uvicorn "mangedong.api.app:create_app" --factory --reload
+```
+
+默认使用本地 SQLite 数据库 `mangedong.db`。可通过环境变量覆盖：
+
+```bash
+MANGEDONG_DATABASE_URL="sqlite:///./mangedong.db"
+MANGEDONG_SECRET_KEY="change-me"
+```
+
+当前已实现的第一轮 API：
+
+- `GET /health`
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /auth/me`
+- `POST /teams`
+- `GET /teams`
+- `POST /teams/{team_id}/members`
+- `GET /teams/{team_id}/members`
+- `POST /projects`
+- `GET /projects?team_id=...`
+- `GET /projects/{project_id}`
+
 ## 后续扩展方向
 
 - 将 `AlgorithmicColorizer` 替换为漫画上色模型或第三方 API 适配器。
@@ -62,3 +91,4 @@ python3 -m pytest
 ## 产品规划
 
 - [Web SaaS 工作台 PRD 初稿](docs/PRD.md)
+- [第一轮开发拆解](docs/DEVELOPMENT_PLAN.md)
