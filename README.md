@@ -79,6 +79,25 @@ http://localhost:8000/app
 
 第三方 **API Key** 和 **ComfyUI 地址** 只在顶栏「配置模型」或「模型配置」页填写。ComfyUI 支持局域网 `8188` 加上内网穿透公网 URL。
 
+千问 **Token Plan 团队版** 按官方要求只给 AI 编程/智能体工具交互使用。工作台「制片助手」模拟 Cursor / Qwen Code / Claude Code / Cline / OpenClaw 的协议和 User-Agent：
+
+- OpenAI 兼容：`https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`
+- Anthropic 兼容（Claude Code）：`https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic`
+- API Key 必须以 `sk-sp-` 开头，不可与 `sk-ws-` / dashscope 按量地址混用
+- 图像 Skill：`/api/v1/services/aigc/multimodal-generation/generation`
+- 视频 Skill：异步 `video-synthesis`（HappyHorse）
+- 不会把席位 Key 接到 OCR/上色/出片等后台批量任务上
+
+环境变量（可被团队配置覆盖）：
+
+```bash
+MANGEDONG_TOKENPLAN_API_KEY=sk-sp-...
+MANGEDONG_TOKENPLAN_TOOL=qwen-code
+MANGEDONG_TOKENPLAN_TEXT_MODEL=qwen3.6-plus
+MANGEDONG_TOKENPLAN_IMAGE_MODEL=qwen-image-2.0
+MANGEDONG_TOKENPLAN_VIDEO_MODEL=happyhorse-1.1-t2v
+```
+
 团队基础设施在「设置」页配置：
 
 - SMTP：邀请和重置密码发信（每个团队一份）
@@ -199,6 +218,12 @@ ComfyUI 先在局域网 `8188` 启动，再做内网穿透；把穿透后的公�
 - `POST /ai-jobs/{job_id}/cancel`
 - `POST /projects/{project_id}/ai-jobs/run-pending`
 - `POST /teams/{team_id}/ai-providers`
+- `GET /token-plan/catalog`
+- `PUT /teams/{team_id}/token-plan`
+- `GET /teams/{team_id}/token-plan`
+- `POST /teams/{team_id}/token-plan/test`
+- `POST /projects/{project_id}/studio-agent/turn`
+- `POST /projects/{project_id}/studio-agent/skill`
 - `GET /teams/{team_id}/ai-providers`
 - `POST /teams/{team_id}/comfyui/instances`
 - `POST /comfyui/instances/{instance_id}/health-check`

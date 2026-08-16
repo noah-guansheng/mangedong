@@ -69,7 +69,10 @@ from mangedong.api.schemas import (
     TeamRead,
     TimelineCreate,
     TimelineItemCreate,
+    TokenPlanConfig,
+    TokenPlanSkillRequest,
     TokenResponse,
+    StudioAgentTurn,
     UserCreate,
     UserLogin,
     UserRead,
@@ -88,6 +91,16 @@ from mangedong.api.objectstore import (
     signed_s3_request,
 )
 from mangedong.api.providers import ProviderError, chat_complete, comfyui_credentials, probe_comfyui_instance, provider_credentials, run_comfyui_prompt
+from mangedong.api.tokenplan import (
+    catalog as tokenplan_catalog,
+    download_bytes,
+    generate_image,
+    probe_tokenplan,
+    resolve_tokenplan,
+    run_agent_turn,
+    submit_video,
+    tokenplan_from_env,
+)
 from mangedong.api.secrets import encrypt_secret, mask_secret, random_password
 from mangedong.api.security import create_access_token, hash_password, parse_access_token, verify_password
 from mangedong.api.services import project_storage, safe_filename, write_export_package, write_mock_wav, write_srt
@@ -380,6 +393,82 @@ def attach_object_storage(
         return {**data, **stored}
     except Exception as exc:
         return {**data, "storage_backend": "local_fallback", "storage_error": str(exc)}
+
+
+def execute_studio_tool(
+    db: Session,
+    request: Request,
+    *,
+    project: Project,
+    user: User,
+    config: dict,
+    name: str,
+    arguments: dict,
+) -> dict:
+    if name == "read_project_brief":
+        return {"project_id": project.id, "name": project.name, "brief": project.brief}
+    if name == "list_panels":
+        panels = list(db.scalars(select(Panel).where(Panel.project_id == project.id).order_by(Panel.id.asc()).limit(40)))
+        return {
+            "count": len(panels),
+            "panels": [{"id": panel.id, "page_id": panel.page_id, "panel_index": panel.panel_index, "status": panel.status} for panel in panels],
+        }
+    if name == "text_to_image":
+        generated = generate_image(
+            config,
+            prompt=str(arguments.get("prompt") or ""),
+            model=arguments.get("model"),
+            size=str(arguments.get("size") or "1024*1024"),
+        )
+        local_path = None
+        urls = generated.get("image_urls") or []
+        if urls:
+            try:
+                payload = download_bytes(str(urls[0]))
+                path = project_storage(request.app.state.storage_dir, project.id, "tokenplan", "image.png")
+                path.write_bytes(payload)
+                local_path = str(path)
+            except Exception as exc:
+                generated["download_error"] = str(exc)
+        stored = attach_object_storage(
+            db,
+            request,
+            team_id=project.team_id,
+            project_id=project.id,
+            local_path=local_path or project_storage(request.app.state.storage_dir, project.id, "tokenplan", "image-placeholder.txt"),
+            kind="tokenplan-image",
+            data={**generated, "local_path": local_path},
+        ) if local_path else generated
+        create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="tokenplan_image",
+            status="succeeded" if urls else "submitted",
+            data=stored,
+            created_by_id=user.id,
+        )
+        return stored
+    if name == "text_to_video":
+        submitted = submit_video(
+            config,
+            prompt=str(arguments.get("prompt") or ""),
+            model=arguments.get("model"),
+            resolution=str(arguments.get("resolution") or "720P"),
+            ratio=str(arguments.get("ratio") or "16:9"),
+            duration=int(arguments.get("duration") or 5),
+        )
+        create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="tokenplan_video",
+            status=str(submitted.get("status") or "PENDING"),
+            data=submitted,
+            created_by_id=user.id,
+        )
+        return submitted
+    return {"ok": False, "error": f"Unknown tool {name}"}
 
 
 def parse_workflow(workflow_json: dict, published_parameters: dict) -> dict:
@@ -1106,6 +1195,138 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             "data": resource.data if resource else {"max_running": 8, "lease_ttl_seconds": lease_ttl_seconds()},
             "snapshot": snapshot,
         }
+
+    @api.get("/token-plan/catalog")
+    def get_tokenplan_catalog(current_user: CurrentUser) -> dict[str, object]:
+        _ = current_user
+        return tokenplan_catalog()
+
+    @api.put("/teams/{team_id}/token-plan", response_model=ProductionResourceRead)
+    def upsert_tokenplan(team_id: int, payload: TokenPlanConfig, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        data = payload.model_dump(mode="json")
+        existing = latest_team_config(db, team_id, "tokenplan_config")
+        if not data.get("api_key") and existing is not None:
+            data["api_key"] = existing.data.get("api_key")
+        elif data.get("api_key"):
+            data["api_key"] = encrypt_secret(str(data["api_key"]), request.app.state.secret_key)
+        resource = upsert_team_config(
+            db,
+            team_id=team_id,
+            resource_type="tokenplan_config",
+            data=data,
+            created_by_id=current_user.id,
+        )
+        return resource_read(resource, masked_config(dict(resource.data), ("api_key",)))
+
+    @api.get("/teams/{team_id}/token-plan")
+    def get_tokenplan(team_id: int, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_team_membership(db, current_user.id, team_id)
+        resource = latest_team_config(db, team_id, "tokenplan_config")
+        env = tokenplan_from_env()
+        data = resource.data if resource else env
+        return {
+            "configured": bool((resource and resource.data.get("api_key")) or env),
+            "source": "team" if resource else ("env" if env else "none"),
+            "data": masked_config(data if data else {}, ("api_key",)),
+            "catalog": tokenplan_catalog(),
+        }
+
+    @api.post("/teams/{team_id}/token-plan/test")
+    def test_tokenplan(team_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> dict[str, object]:
+        require_team_role(db, current_user.id, team_id, MANAGE_TEAM_ROLES)
+        resource = latest_team_config(db, team_id, "tokenplan_config")
+        config = resolve_tokenplan(None if resource is None else resource.data, request.app.state.secret_key)
+        return probe_tokenplan(config)
+
+    @api.post("/projects/{project_id}/studio-agent/turn")
+    def studio_agent_turn(
+        project_id: int,
+        payload: StudioAgentTurn,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> dict[str, object]:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        resource = latest_team_config(db, project.team_id, "tokenplan_config")
+        config = resolve_tokenplan(None if resource is None else resource.data, request.app.state.secret_key)
+        if payload.model:
+            config = {**config, "text_model": payload.model}
+        history = [dict(item) for item in payload.messages]
+        history.append({"role": "user", "content": payload.message})
+
+        def execute_tool(name: str, arguments: dict) -> dict:
+            return execute_studio_tool(
+                db,
+                request,
+                project=project,
+                user=current_user,
+                config=config,
+                name=name,
+                arguments=arguments,
+            )
+
+        result = run_agent_turn(config, history, execute_tool=execute_tool)
+        create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="studio_agent_turn",
+            status="live" if result.get("ok") else "fallback",
+            data={
+                "message": payload.message,
+                "reply": result.get("text"),
+                "mode": result.get("mode"),
+                "tool_trace": result.get("tool_trace") or [],
+                "tool_profile": config.get("tool_profile"),
+            },
+            created_by_id=current_user.id,
+        )
+        return result
+
+    @api.post("/projects/{project_id}/studio-agent/skill")
+    def studio_agent_skill(
+        project_id: int,
+        payload: TokenPlanSkillRequest,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> dict[str, object]:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        resource = latest_team_config(db, project.team_id, "tokenplan_config")
+        config = resolve_tokenplan(None if resource is None else resource.data, request.app.state.secret_key)
+        if not config.get("api_key"):
+            return {"ok": False, "mode": "local_fallback", "error": "Token Plan API Key is not configured."}
+        try:
+            if payload.skill == "text-to-image":
+                result = execute_studio_tool(
+                    db,
+                    request,
+                    project=project,
+                    user=current_user,
+                    config=config,
+                    name="text_to_image",
+                    arguments={"prompt": payload.prompt, "model": payload.model, "size": payload.size},
+                )
+            else:
+                result = execute_studio_tool(
+                    db,
+                    request,
+                    project=project,
+                    user=current_user,
+                    config=config,
+                    name="text_to_video",
+                    arguments={
+                        "prompt": payload.prompt,
+                        "model": payload.model,
+                        "resolution": payload.resolution,
+                        "ratio": payload.ratio,
+                        "duration": payload.duration,
+                    },
+                )
+        except Exception as exc:
+            return {"ok": False, "mode": "local_fallback", "skill": payload.skill, "error": str(exc)}
+        return result
 
     @api.post("/projects", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
     def create_project(payload: ProjectCreate, current_user: CurrentUser, db: DbSession) -> Project:

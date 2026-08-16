@@ -559,6 +559,23 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 .dot.live { background: var(--accent); }
 .dot.done { background: var(--ok); }
 
+.agent-log {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.agent-bubble {
+  background: var(--snow);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.agent-bubble.user { border-color: var(--line-strong); }
+.agent-bubble p { margin: 6px 0 0; white-space: pre-wrap; }
+
+
 @media (max-width: 960px) {
   #app {
     grid-template-columns: 1fr;

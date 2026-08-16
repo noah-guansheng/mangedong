@@ -37,6 +37,7 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "审片" in app_page.text
     assert "导出" in app_page.text
     assert "模型配置" in app_page.text
+    assert "制片助手" in app_page.text
     assert "成员" in app_page.text
     assert "任务" in app_page.text
     assert "设置" in app_page.text
@@ -70,6 +71,9 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "resourceCard" in script.text
     assert "renderAI" in script.text
     assert "provider-form" in script.text
+    assert "tokenplan-form" in script.text
+    assert "studio-agent-form" in script.text
+    assert "sk-sp-" in script.text
     assert "apiKey" in script.text
     assert "comfyui-form" in script.text
     assert "baseUrl" in script.text
@@ -89,6 +93,7 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "statusHistory" in script.text
     assert "keydown" in script.text
     assert "renderSettings" in script.text
+    assert "renderAgent" in script.text
     assert "context-form" in script.text
     assert "smtp-form" in script.text
     assert "s3-form" in script.text

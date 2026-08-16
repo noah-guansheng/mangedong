@@ -21,7 +21,8 @@
 | 音频 | 台词 / BGM | 能建台词、出 WAV/SRT、加 BGM。 |
 | 审片 | QC / 时间码批注 | 能播 MP4、按秒数批注、建 QC 和导出记录。 |
 | 导出 | 审片包 / 冻结 | 能建审片包、preflight、freeze ZIP。 |
-| 模型配置 | Provider / ComfyUI / Workflow | 能填 Key 和地址；密钥加密存储；健康检查和 `/prompt` 真连，失败回退。 |
+| 模型配置 | Provider / ComfyUI / Workflow / Token Plan | 能填千问 Token Plan 席位 Key，按 Cursor/Qwen Code/Claude Code 画像接入；ComfyUI 地址照旧。 |
+| 制片助手 | Token Plan 交互 Agent | 按编程工具协议对话，可调 Brief/分格工具和图像/视频 Skill。不是后台批量任务。 |
 | 成员 | RBAC | 能邀请已注册或未注册邮箱、改角色。配置 SMTP 后会尝试发信，失败仍返回令牌。 |
 | 任务 | Job 队列 | 能看任务、运行、重试、取消；数据库 lease 队列，可多机 `mangedong worker`。 |
 | 设置 | SMTP / S3 / 会话 | 每个团队可配 SMTP 和 S3；密钥脱敏。 |

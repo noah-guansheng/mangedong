@@ -5,6 +5,7 @@ const state = {
   statusHistory: [],
   activeRoute: "",
   selectedPanelId: 0,
+  agentMessages: [],
 };
 
 const ROUTES = [
@@ -20,6 +21,7 @@ const ROUTES = [
   { id: "compliance", label: "合规下载", group: "交付" },
   { id: "resources", label: "资源浏览", group: "交付" },
   { id: "ai", label: "模型配置", group: "系统" },
+  { id: "agent", label: "制片助手", group: "系统" },
   { id: "members", label: "成员", group: "系统" },
   { id: "ops", label: "任务", group: "系统" },
   { id: "reports", label: "报表", group: "系统" },
@@ -118,6 +120,7 @@ function renderRoute(route) {
     audio: renderAudio,
     resources: renderResources,
     ai: renderAI,
+    agent: renderAgent,
     members: renderMembers,
     review: renderReview,
     delivery: renderDelivery,
@@ -860,7 +863,52 @@ async function renderAI() {
     "AI / ComfyUI 配置",
     "API Key 填上面这块，ComfyUI 地址填下面这块。保存后整个团队都能用。",
     `
-      <div class="callout"><strong>就在这一页。</strong> 第三方模型的 Base URL / API Key / 模型名，以及 ComfyUI 的 http://127.0.0.1:8188 和 Token，全部写在下面两个表单里。</div>
+      <div class="callout"><strong>就在这一页。</strong> 千问 Token Plan 团队版按 Cursor / Qwen Code / Claude Code 方式接入，只给「制片助手」交互使用，不会拿席位 Key 去跑后台批量任务。ComfyUI 仍填下面。</div>
+      <form id="tokenplan-form" class="surface" data-testid="tokenplan-form">
+        <h3>千问 Token Plan 团队版</h3>
+        <p class="muted">API Key 以 sk-sp- 开头。OpenAI 兼容 Base URL 已预填；Claude Code 会自动改用 Anthropic 端点。图像/视频走 Skill，不是 chat completions。</p>
+        <label>工具画像
+          <select name="toolProfile">
+            <option value="qwen-code">Qwen Code</option>
+            <option value="cursor">Cursor</option>
+            <option value="claude-code">Claude Code</option>
+            <option value="cline">Cline</option>
+            <option value="openclaw">OpenClaw</option>
+          </select>
+        </label>
+        <label>API Key <input name="apiKey" type="password" placeholder="sk-sp-..." autocomplete="off" /></label>
+        <label>文本模型
+          <select name="textModel">
+            <option value="qwen3.6-plus">qwen3.6-plus</option>
+            <option value="qwen3.8-max">qwen3.8-max</option>
+            <option value="qwen3.7-max">qwen3.7-max</option>
+            <option value="qwen3.7-plus">qwen3.7-plus</option>
+            <option value="qwen3.6-flash">qwen3.6-flash</option>
+            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+            <option value="kimi-k2.7-code">kimi-k2.7-code</option>
+            <option value="glm-5.2">glm-5.2</option>
+            <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+          </select>
+        </label>
+        <label>图像 Skill 模型
+          <select name="imageModel">
+            <option value="qwen-image-2.0">qwen-image-2.0</option>
+            <option value="qwen-image-2.0-pro">qwen-image-2.0-pro</option>
+            <option value="qwen-image-3.0-pro">qwen-image-3.0-pro</option>
+            <option value="wan2.7-image">wan2.7-image</option>
+            <option value="wan2.7-image-pro">wan2.7-image-pro</option>
+          </select>
+        </label>
+        <label>视频 Skill 模型
+          <select name="videoModel">
+            <option value="happyhorse-1.1-t2v">happyhorse-1.1-t2v</option>
+            <option value="happyhorse-1.1-i2v">happyhorse-1.1-i2v</option>
+            <option value="happyhorse-1.1-r2v">happyhorse-1.1-r2v</option>
+          </select>
+        </label>
+        <button class="primary" type="submit">保存 Token Plan</button>
+        <button class="ghost" type="button" id="test-tokenplan">像编程工具一样探活</button>
+      </form>
       <section class="surface">
         <h3>已保存</h3>
         <p class="muted">${providers.length} providers · ${instances.length} ComfyUI · ${workflows.length} workflows</p>
@@ -918,6 +966,37 @@ async function renderAI() {
       <div id="ai-config-result" class="surface"></div>
     `,
   );
+  const tokenplanForm = document.getElementById("tokenplan-form");
+  api(`/teams/${state.teamId}/token-plan`).then((saved) => {
+    if (!saved?.data || !tokenplanForm) return;
+    if (saved.data.tool_profile) tokenplanForm.toolProfile.value = saved.data.tool_profile;
+    if (saved.data.text_model) tokenplanForm.textModel.value = saved.data.text_model;
+    if (saved.data.image_model) tokenplanForm.imageModel.value = saved.data.image_model;
+    if (saved.data.video_model) tokenplanForm.videoModel.value = saved.data.video_model;
+  }).catch(() => {});
+  tokenplanForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/teams/${state.teamId}/token-plan`, {
+      method: "PUT",
+      body: JSON.stringify({
+        api_key: form.get("apiKey") || null,
+        tool_profile: form.get("toolProfile"),
+        text_model: form.get("textModel"),
+        image_model: form.get("imageModel"),
+        video_model: form.get("videoModel"),
+      }),
+    });
+    localStorage.setItem("md_models_ready", "1");
+    document.getElementById("setup-banner").hidden = true;
+    document.getElementById("ai-config-result").textContent = `Token Plan 已保存：${result.data.tool_profile} · ${result.data.text_model}`;
+    setStatus("Token Plan 已按编程工具方式保存");
+  });
+  document.getElementById("test-tokenplan").addEventListener("click", async () => {
+    const result = await api(`/teams/${state.teamId}/token-plan/test`, { method: "POST" });
+    document.getElementById("ai-config-result").textContent = `探活 ${result.mode} · ${result.user_agent || ""} · ${result.error || result.preview || "ok"}`;
+    setStatus(result.ok ? "Token Plan 可达" : "Token Plan 当前回退，席位 Key 或网络未通");
+  });
   document.getElementById("provider-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1276,6 +1355,68 @@ async function renderNotifications() {
     </section>`,
   );
   setStatus("通知中心已加载");
+}
+
+async function renderAgent() {
+  setShell("agent");
+  await ensureTeam();
+  await ensureProject();
+  const saved = await api(`/teams/${state.teamId}/token-plan`).catch(() => ({ data: {}, configured: false }));
+  const log = (state.agentMessages || [])
+    .filter((item) => item.role === "user" || item.role === "assistant")
+    .map((item) => `<article class="agent-bubble ${item.role}"><b>${item.role === "user" ? "你" : "助手"}</b><p>${String(item.content || "").replace(/</g, "&lt;")}</p></article>`)
+    .join("");
+  view.innerHTML = page(
+    "Agent",
+    "制片助手",
+    "按千问 Token Plan 团队版要求，这里模拟 Cursor / Qwen Code 交互，不拿席位 Key 跑后台批量任务。",
+    `
+      <section class="surface">
+        <p class="muted">当前画像 ${saved.data?.tool_profile || "未配置"} · 文本 ${saved.data?.text_model || "-"} · ${saved.configured ? "已配置 Key" : "还没 Key"}</p>
+        <p class="muted">图像 Skill ${saved.data?.image_model || "qwen-image-2.0"} · 视频 Skill ${saved.data?.video_model || "happyhorse-1.1-t2v"}</p>
+      </section>
+      <div id="agent-log" class="agent-log">${log || '<p class="muted">问分镜、上色参考、或者让它用 Skill 出一张静帧。</p>'}</div>
+      <form id="studio-agent-form" class="surface" data-testid="studio-agent-form">
+        <label>对助手说 <textarea name="message" rows="4" placeholder="例如：根据当前 Brief 列出分镜要点；或：用 qwen-image-2.0 画一张角色定妆静帧"></textarea></label>
+        <button class="primary" type="submit">发送（交互一轮）</button>
+        <button class="ghost" type="button" id="agent-image-skill">/text-to-image</button>
+        <button class="ghost" type="button" id="agent-video-skill">/text-to-video</button>
+      </form>
+      <div id="agent-result" class="surface muted"></div>
+    `,
+  );
+  document.getElementById("studio-agent-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const message = String(form.get("message") || "").trim();
+    if (!message) return;
+    const result = await api(`/projects/${state.projectId}/studio-agent/turn`, {
+      method: "POST",
+      body: JSON.stringify({ message, messages: state.agentMessages || [] }),
+    });
+    state.agentMessages = (result.messages || []).filter((item) => item.role !== "system");
+    document.getElementById("agent-result").textContent = `${result.mode}: ${result.text || result.error || ""}`;
+    setStatus(result.ok ? "助手已回复" : "助手回退本地说明");
+    renderAgent();
+  });
+  document.getElementById("agent-image-skill").addEventListener("click", async () => {
+    const prompt = document.querySelector("#studio-agent-form textarea").value.trim() || "manga character color key still, anime cel shading";
+    const result = await api(`/projects/${state.projectId}/studio-agent/skill`, {
+      method: "POST",
+      body: JSON.stringify({ skill: "text-to-image", prompt }),
+    });
+    document.getElementById("agent-result").textContent = JSON.stringify(result, null, 2).slice(0, 1200);
+    setStatus(result.ok ? "图像 Skill 已调用" : "图像 Skill 回退");
+  });
+  document.getElementById("agent-video-skill").addEventListener("click", async () => {
+    const prompt = document.querySelector("#studio-agent-form textarea").value.trim() || "anime character walks through rain, 16:9";
+    const result = await api(`/projects/${state.projectId}/studio-agent/skill`, {
+      method: "POST",
+      body: JSON.stringify({ skill: "text-to-video", prompt }),
+    });
+    document.getElementById("agent-result").textContent = JSON.stringify(result, null, 2).slice(0, 1200);
+    setStatus(result.ok ? "视频 Skill 已提交" : "视频 Skill 回退");
+  });
 }
 
 function renderHelp() {

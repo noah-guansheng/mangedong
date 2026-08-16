@@ -4,7 +4,7 @@
 
 - 运行命令：`python3 -m pytest`
 - 测试范围：CLI 管道、Web SaaS API、Web 工作台页面
-- 测试结果：22 passed
+- 测试结果：26 passed
 
 ## 自动化测试覆盖
 
@@ -216,11 +216,26 @@
 - S3 SigV4 签名头
 - ComfyUI `tunnel_url` 保存，穿透不可达时 health 为 fallback
 
+### 10. Token Plan 编程工具接入测试
+
+文件：`tests/test_tokenplan.py`
+
+覆盖内容：
+
+- 模型 ID 精确白名单，拒绝 qwen3-coder-next
+- Cursor 模型别名 glm-5 → glm-5-0
+- Cursor / Claude Code 请求头（User-Agent、Bearer / x-api-key）
+- 团队 Token Plan 保存并脱敏
+- 探活走 Qwen Code User-Agent
+- 制片助手一轮对话会调 read_project_brief 工具
+- 图像 Skill 解析 image URL 并落盘
+- 视频 Skill 提交异步 task_id
+
 ## 最近一次测试输出
 
 ```text
-......................                                                   [100%]
-22 passed in 7.85s
+..........................                                               [100%]
+26 passed in 8.38s
 ```
 
 现场 API（重启后的 `uvicorn :8000`）额外验证：
@@ -238,6 +253,18 @@ comfy tunnel=https://comfy.example.ngrok-free.app health=fallback
 LIVE_INFRA_E2E_OK
 ```
 
+Token Plan 现场（假 Key 打真实网关，确认编程工具握手）：
+
+```text
+GET /token-plan/catalog openai+anthropic bases ok, 17/5/3 models
+PUT /teams/{id}/token-plan api_key=******** tool_profile=cursor
+POST test → fallback Unauthorized · User-Agent Cursor/1.7.0 · OpenAI compatible-mode/v1
+studio-agent/turn → local_fallback Unauthorized
+direct Cursor POST chat/completions → HTTP 401 invalid_api_key
+direct Claude Code POST /apps/anthropic/v1/messages → HTTP 401 InvalidApiKey
+LIVE_TOKENPLAN_E2E_OK
+```
+
 ## 当前测试结论
 
 - 本轮新增后端生产对象通过 API 自动化测试。
@@ -251,6 +278,7 @@ LIVE_INFRA_E2E_OK
 - 当前测试不只是接口测试，已包含对应 Web 页面渲染自动化测试。
 - 邀请、重置密码、worker tick、密钥加密、ComfyUI fallback、资源文件播放通过 `tests/test_completion.py`。
 - 团队 SMTP / S3 / 多机 lease 队列通过 `tests/test_infra.py`。
+- 千问 Token Plan 按编程工具接入通过 `tests/test_tokenplan.py`；现场用 Cursor User-Agent 打到真实网关返回 401 invalid_api_key。
 
 ## 后续测试建议
 

@@ -382,3 +382,27 @@ class S3Config(BaseModel):
 class QueueConfig(BaseModel):
     max_running: int = Field(default=8, ge=1, le=256)
     lease_ttl_seconds: int = Field(default=45, ge=5, le=3600)
+
+
+class TokenPlanConfig(BaseModel):
+    api_key: str | None = None
+    tool_profile: Literal["cursor", "qwen-code", "claude-code", "cline", "openclaw"] = "qwen-code"
+    text_model: str = "qwen3.6-plus"
+    image_model: str = "qwen-image-2.0"
+    video_model: str = "happyhorse-1.1-t2v"
+
+
+class StudioAgentTurn(BaseModel):
+    message: str = Field(min_length=1)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    model: str | None = None
+
+
+class TokenPlanSkillRequest(BaseModel):
+    skill: Literal["text-to-image", "text-to-video"]
+    prompt: str = Field(min_length=1)
+    model: str | None = None
+    size: str = "1024*1024"
+    resolution: str = "720P"
+    ratio: str = "16:9"
+    duration: int = Field(default=5, ge=1, le=15)
