@@ -110,6 +110,23 @@ def doctor() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("serve")
+def serve_cmd(
+    host: Annotated[str, typer.Option("--host", help="Bind host.")] = "0.0.0.0",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535, help="Bind port.")] = 8000,
+) -> None:
+    """Start the studio workbench (same as ./start.sh after install)."""
+
+    import os
+
+    import uvicorn
+
+    os.environ.setdefault("MANGEDONG_DATABASE_URL", "sqlite:///./mangedong.db")
+    os.environ.setdefault("MANGEDONG_STORAGE_DIR", "./mangedong_storage")
+    typer.echo(f"mangedong 工作台: http://127.0.0.1:{port}/app")
+    uvicorn.run("mangedong.api.app:create_app", factory=True, host=host, port=port)
+
+
 @app.command("worker")
 def worker_cmd(
     database_url: Annotated[str | None, typer.Option("--database-url", help="Shared database URL for the job queue.")] = None,

@@ -7,6 +7,21 @@
 3. 动画：用 Ken Burns 镜头运动和轻微明暗变化生成帧序列。
 4. 导出：将帧序列编码为 H.264 MP4，并输出 manifest 记录产物。
 
+## 一键启动工作台
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+浏览器打开 http://127.0.0.1:8000/app 。脚本会创建 `.venv`、安装依赖并启动 API（文件库 SQLite 下自动带内嵌 Worker）。Windows 用 `start.cmd`。已安装过的环境也可以：
+
+```bash
+python3 -m mangedong.cli serve --host 0.0.0.0 --port 8000
+```
+
+可选把 `.env.example` 复制为 `.env`，填入 Token Plan 席位 Key 等变量。
+
 ## 安装
 
 ```bash
