@@ -29,8 +29,14 @@ const ROUTES = [
   { id: "notifications", label: "通知", group: "系统" },
   { id: "settings", label: "设置", group: "系统" },
   { id: "help", label: "帮助", group: "系统" },
-  { id: "auth", label: "登录", group: "系统" },
+  { id: "login", label: "登录", group: "账户" },
+  { id: "register", label: "注册", group: "账户" },
+  { id: "forgot", label: "忘记密码", group: "账户" },
+  { id: "reset", label: "重置密码", group: "账户" },
+  { id: "invite", label: "接受邀请", group: "账户" },
 ];
+
+const AUTH_ROUTES = new Set(["login", "register", "forgot", "reset", "invite", "auth"]);
 
 const view = document.getElementById("view");
 const statusBox = document.getElementById("status");
@@ -41,13 +47,13 @@ const paletteInput = document.getElementById("palette-input");
 const paletteResults = document.getElementById("palette-results");
 
 document.querySelectorAll("[data-route]").forEach((button) => {
-  button.addEventListener("click", () => renderRoute(button.dataset.route));
+  button.addEventListener("click", () => go(button.dataset.route));
 });
 document.getElementById("open-palette")?.addEventListener("click", openPalette);
 document.getElementById("palette-form")?.addEventListener("submit", (event) => {
   event.preventDefault();
   const first = paletteResults.querySelector("button");
-  if (first) renderRoute(first.dataset.route);
+  if (first) go(first.dataset.route);
 });
 paletteInput?.addEventListener("input", () => renderPaletteResults(paletteInput.value));
 
@@ -65,15 +71,40 @@ function setStatus(message) {
   statusHistory.innerHTML = `<ol>${state.statusHistory.map((entry) => `<li>${entry.at} - ${entry.message}</li>`).join("")}</ol>`;
 }
 
+function parseLocation() {
+  const raw = (location.hash || "").replace(/^#\/?/, "");
+  const qIndex = raw.indexOf("?");
+  const path = (qIndex === -1 ? raw : raw.slice(0, qIndex)).trim();
+  const params = new URLSearchParams(qIndex === -1 ? "" : raw.slice(qIndex + 1));
+  const route = path === "auth" ? "login" : path;
+  return { route, params };
+}
+
+function go(route, query = {}, options = {}) {
+  if (route === "auth") route = "login";
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value != null && String(value) !== "") params.set(key, String(value));
+  }
+  const next = `#/${route}${params.toString() ? `?${params}` : ""}`;
+  if (options.replace || location.hash === next) {
+    if (location.hash !== next) history.replaceState(null, "", `${location.pathname}${location.search}${next}`);
+    renderRoute(route);
+    return;
+  }
+  location.hash = next;
+}
+
 function setShell(route) {
   state.activeRoute = route;
-  appRoot.dataset.mode = route === "auth" ? "auth" : "workbench";
+  appRoot.dataset.mode = AUTH_ROUTES.has(route) ? "auth" : "workbench";
   document.querySelectorAll(".rail [data-route]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.route === route);
   });
   document.getElementById("team-chip").textContent = state.teamId ? `团队 #${state.teamId}` : "团队未选择";
   document.getElementById("project-chip").textContent = state.projectId ? `项目 #${state.projectId}` : "项目未选择";
-  document.getElementById("setup-banner").hidden = Boolean(localStorage.getItem("md_models_ready")) || route === "ai" || route === "auth";
+  document.getElementById("setup-banner").hidden =
+    Boolean(localStorage.getItem("md_models_ready")) || route === "ai" || AUTH_ROUTES.has(route);
   const current = ROUTES.find((item) => item.id === route);
   document.title = current ? `${current.label} · mangedong` : "mangedong 生产工作台";
 }
@@ -109,7 +140,12 @@ async function api(path, options = {}) {
 function renderRoute(route) {
   if (palette?.open) palette.close();
   const routes = {
-    auth: renderAuth,
+    auth: renderLogin,
+    login: renderLogin,
+    register: renderRegister,
+    forgot: renderForgot,
+    reset: renderReset,
+    invite: renderInvite,
     dashboard: renderDashboard,
     pipeline: renderPipeline,
     production: renderProduction,
@@ -136,7 +172,7 @@ function renderRoute(route) {
   if (result && typeof result.catch === "function") {
     result.catch((error) => {
       setStatus(error.message);
-      if (String(error.message).startsWith("401")) renderAuth();
+      if (String(error.message).startsWith("401")) go("login");
     });
   }
   return result;
@@ -149,9 +185,10 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key === "Escape" && palette?.open) palette.close();
+  if (AUTH_ROUTES.has(state.activeRoute)) return;
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
   const shortcuts = { d: "dashboard", p: "pipeline", i: "import", c: "color", t: "timeline", a: "audio", r: "reports", o: "ops", h: "help", m: "ai" };
-  if (shortcuts[event.key]) renderRoute(shortcuts[event.key]);
+  if (shortcuts[event.key]) go(shortcuts[event.key]);
 });
 
 function openPalette() {
@@ -163,7 +200,11 @@ function openPalette() {
 
 function renderPaletteResults(query) {
   const needle = query.trim().toLowerCase();
-  const matches = ROUTES.filter((route) => !needle || `${route.label} ${route.id} ${route.group}`.toLowerCase().includes(needle));
+  const matches = ROUTES.filter((route) => {
+    if (state.token && route.group === "账户") return false;
+    if (!state.token && route.group !== "账户") return false;
+    return !needle || `${route.label} ${route.id} ${route.group}`.toLowerCase().includes(needle);
+  });
   paletteResults.innerHTML = matches
     .map(
       (route, index) => `
@@ -177,13 +218,12 @@ function renderPaletteResults(query) {
     )
     .join("");
   paletteResults.querySelectorAll("[data-route]").forEach((button) => {
-    button.addEventListener("click", () => renderRoute(button.dataset.route));
+    button.addEventListener("click", () => go(button.dataset.route));
   });
 }
 
-function renderAuth() {
-  setShell("auth");
-  view.innerHTML = `
+function authGate(title, formHtml, links) {
+  return `
     <section class="auth-gate">
       <div class="auth-copy">
         <div>
@@ -195,68 +235,183 @@ function renderAuth() {
       </div>
       <div class="auth-panel">
         <p class="kicker">Account</p>
-        <h2>登录工作室</h2>
-        <form id="auth-form" class="surface">
-          <label>邮箱 <input name="email" type="email" value="owner@example.com" /></label>
-          <label>密码 <input name="password" type="password" value="password123" /></label>
-          <label>Display name <input name="displayName" value="Owner" /></label>
-          <button class="primary" type="submit">进入工作台</button>
-        </form>
-        <form id="reset-form" class="surface">
-          <h3>忘记密码</h3>
-          <label>邮箱 <input name="email" type="email" value="owner@example.com" /></label>
-          <label>新密码 <input name="password" type="password" value="password123" /></label>
-          <button class="ghost" type="submit">发送重置并改密</button>
-          <p id="reset-result" class="muted"></p>
-        </form>
-        <form id="invite-form" class="surface">
-          <h3>接受邀请</h3>
-          <label>邀请令牌 <input name="token" /></label>
-          <label>Display name <input name="displayName" value="Artist" /></label>
-          <label>设置密码 <input name="password" type="password" value="password123" /></label>
-          <button class="ghost" type="submit">加入团队</button>
-          <p id="invite-result" class="muted"></p>
-        </form>
+        <h2>${title}</h2>
+        ${formHtml}
+        <nav class="auth-links">${links}</nav>
       </div>
     </section>
   `;
+}
+
+function enterWorkbench(token, message) {
+  state.token = token;
+  persistSession();
+  setStatus(message);
+  go("dashboard");
+}
+
+function escapeAttr(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;");
+}
+
+function showAuthError(id, error) {
+  const node = document.getElementById(id);
+  if (node) node.textContent = error.message.replace(/^\d+:\s*/, "") || "操作失败";
+  setStatus(error.message);
+}
+
+function renderLogin() {
+  setShell("login");
+  view.innerHTML = authGate(
+    "登录工作室",
+    `
+      <form id="auth-form" class="surface">
+        <label>邮箱 <input name="email" type="email" autocomplete="username" placeholder="you@studio.com" required /></label>
+        <label>密码 <input name="password" type="password" autocomplete="current-password" placeholder="密码" required /></label>
+        <button class="primary" type="submit">进入工作台</button>
+        <p id="auth-result" class="muted"></p>
+      </form>
+    `,
+    `<a href="#/register">注册账号</a><a href="#/forgot">忘记密码</a><a href="#/invite">接受邀请</a>`,
+  );
   document.getElementById("auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const login = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+      });
+      enterWorkbench(login.access_token, "登录成功");
+    } catch (error) {
+      showAuthError("auth-result", error);
+    }
+  });
+}
+
+function renderRegister() {
+  setShell("register");
+  view.innerHTML = authGate(
+    "注册工作室账号",
+    `
+      <form id="register-form" class="surface">
+        <label>邮箱 <input name="email" type="email" autocomplete="username" placeholder="you@studio.com" required /></label>
+        <label>显示名 <input name="displayName" autocomplete="nickname" placeholder="制片 / 画师" required /></label>
+        <label>密码 <input name="password" type="password" autocomplete="new-password" placeholder="至少 8 位" required /></label>
+        <button class="primary" type="submit">创建账号并进入</button>
+        <p id="register-result" class="muted"></p>
+      </form>
+    `,
+    `<a href="#/login">已有账号，去登录</a>`,
+  );
+  document.getElementById("register-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const payload = { email: form.get("email"), password: form.get("password"), display_name: form.get("displayName") };
     try {
       await api("/auth/register", { method: "POST", body: JSON.stringify(payload) });
-    } catch (_) {
-      // Existing users continue to login.
+      const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: payload.email, password: payload.password }) });
+      enterWorkbench(login.access_token, "注册成功");
+    } catch (error) {
+      showAuthError("register-result", error);
     }
-    const login = await api("/auth/login", { method: "POST", body: JSON.stringify({ email: payload.email, password: payload.password }) });
-    state.token = login.access_token;
-    persistSession();
-    setStatus("登录成功");
-    await renderDashboard();
   });
+}
+
+function renderForgot() {
+  setShell("forgot");
+  view.innerHTML = authGate(
+    "忘记密码",
+    `
+      <form id="forgot-form" class="surface">
+        <label>邮箱 <input name="email" type="email" autocomplete="username" placeholder="you@studio.com" required /></label>
+        <button class="primary" type="submit">发送重置链接</button>
+        <p id="forgot-result" class="muted"></p>
+      </form>
+    `,
+    `<a href="#/login">返回登录</a><a href="#/reset">已有重置令牌</a>`,
+  );
+  document.getElementById("forgot-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = document.getElementById("forgot-result");
+    try {
+      const forgot = await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email: form.get("email") }) });
+      if (forgot.reset_token) {
+        result.textContent = "本地未发出邮件，正在跳转到重置页。";
+        go("reset", { token: forgot.reset_token });
+        return;
+      }
+      result.textContent = "如果邮箱存在，会发出重置链接。";
+    } catch (error) {
+      showAuthError("forgot-result", error);
+    }
+  });
+}
+
+function renderReset() {
+  setShell("reset");
+  const token = parseLocation().params.get("token") || "";
+  view.innerHTML = authGate(
+    "重置密码",
+    `
+      <form id="reset-form" class="surface">
+        <label>重置令牌 <input name="token" value="${escapeAttr(token)}" placeholder="邮件或忘记密码页给出的令牌" required /></label>
+        <label>新密码 <input name="password" type="password" autocomplete="new-password" placeholder="新密码" required /></label>
+        <button class="primary" type="submit">确认改密</button>
+        <p id="reset-result" class="muted"></p>
+      </form>
+    `,
+    `<a href="#/login">返回登录</a><a href="#/forgot">重新发送</a>`,
+  );
   document.getElementById("reset-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const forgot = await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email: form.get("email") }) });
-    if (!forgot.reset_token) {
-      document.getElementById("reset-result").textContent = "如果邮箱存在，会发出重置令牌。";
-      return;
+    try {
+      await api("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ token: form.get("token"), password: form.get("password") }),
+      });
+      document.getElementById("reset-result").textContent = "密码已重置，正在返回登录。";
+      go("login");
+    } catch (error) {
+      showAuthError("reset-result", error);
     }
-    await api("/auth/reset-password", { method: "POST", body: JSON.stringify({ token: forgot.reset_token, password: form.get("password") }) });
-    document.getElementById("reset-result").textContent = "密码已重置，请用新密码登录。";
   });
+}
+
+function renderInvite() {
+  setShell("invite");
+  const token = parseLocation().params.get("token") || "";
+  view.innerHTML = authGate(
+    "接受邀请",
+    `
+      <form id="invite-form" class="surface">
+        <label>邀请令牌 <input name="token" value="${escapeAttr(token)}" placeholder="邀请邮件里的令牌" required /></label>
+        <label>显示名 <input name="displayName" autocomplete="nickname" placeholder="画师" required /></label>
+        <label>设置密码 <input name="password" type="password" autocomplete="new-password" placeholder="设置密码" required /></label>
+        <button class="primary" type="submit">加入团队</button>
+        <p id="invite-result" class="muted"></p>
+      </form>
+    `,
+    `<a href="#/login">返回登录</a>`,
+  );
   document.getElementById("invite-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const accepted = await api("/auth/accept-invite", {
-      method: "POST",
-      body: JSON.stringify({ token: form.get("token"), password: form.get("password"), display_name: form.get("displayName") }),
-    });
-    state.token = accepted.access_token;
-    persistSession();
-    document.getElementById("invite-result").textContent = "邀请已接受，正在进入工作台。";
-    await renderDashboard();
+    try {
+      const accepted = await api("/auth/accept-invite", {
+        method: "POST",
+        body: JSON.stringify({ token: form.get("token"), password: form.get("password"), display_name: form.get("displayName") }),
+      });
+      document.getElementById("invite-result").textContent = "邀请已接受，正在进入工作台。";
+      enterWorkbench(accepted.access_token, "已加入团队");
+    } catch (error) {
+      showAuthError("invite-result", error);
+    }
   });
 }
 
@@ -1070,7 +1225,7 @@ async function renderMembers() {
   view.innerHTML = page(
     "Team",
     "成员与权限",
-    "Owner / Admin 可以邀请已注册或未注册邮箱。未注册用户会拿到邀请令牌，到登录页接受邀请。",
+    "Owner / Admin 可以邀请已注册或未注册邮箱。未注册用户会拿到邀请链接，到「接受邀请」页加入团队。",
     `
       <section class="surface">
         <table class="data-table">
@@ -1102,8 +1257,9 @@ async function renderMembers() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const result = await api(`/teams/${state.teamId}/members`, { method: "POST", body: JSON.stringify({ email: form.get("email"), role: form.get("role") }) });
-    document.getElementById("member-result").textContent = result.invite_token
-      ? `已邀请未注册用户 ${result.email}。邀请令牌：${result.invite_token}`
+    const inviteHash = result.invite_token ? `#/invite?token=${encodeURIComponent(result.invite_token)}` : "";
+    document.getElementById("member-result").innerHTML = result.invite_token
+      ? `已邀请未注册用户 ${result.email}。<a href="${inviteHash}">打开接受邀请页</a>`
       : `已加入：${result.email} / ${result.role}`;
     setStatus("成员已邀请");
   });
@@ -1606,5 +1762,25 @@ function renderSettings() {
   });
 }
 
+window.addEventListener("hashchange", () => {
+  const { route } = parseLocation();
+  if (!route) {
+    go(state.token ? "dashboard" : "login", {}, { replace: true });
+    return;
+  }
+  if (!state.token && !AUTH_ROUTES.has(route)) {
+    go("login", {}, { replace: true });
+    return;
+  }
+  renderRoute(route);
+});
+
 if (state.token) persistSession();
-renderRoute(state.token ? "dashboard" : "auth");
+const initial = parseLocation();
+if (!initial.route) {
+  go(state.token ? "dashboard" : "login", {}, { replace: true });
+} else if (!state.token && !AUTH_ROUTES.has(initial.route)) {
+  go("login", {}, { replace: true });
+} else {
+  renderRoute(initial.route);
+}

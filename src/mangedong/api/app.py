@@ -6,6 +6,7 @@ from collections.abc import Generator
 from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -955,11 +956,12 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         team_smtp = latest_team_config(db, membership.team_id, "smtp_config") if membership else None
         config = resolve_smtp(None if team_smtp is None else team_smtp.data, request.app.state.secret_key)
         public_base = str(config.get("public_base_url") or os.getenv("MANGEDONG_PUBLIC_URL") or "http://127.0.0.1:8000").rstrip("/")
+        reset_link = f"{public_base}/app#/reset?token={quote(reset_token, safe='')}"
         sent = send_mail(
             config,
             to_address=user.email,
             subject="mangedong 重置密码",
-            body=f"在工作台登录页使用重置令牌改密。\n令牌：{reset_token}\n入口：{public_base}/app",
+            body=f"打开链接重置密码：\n{reset_link}",
         )
         result["delivery"] = sent["mode"]
         if sent.get("error"):
@@ -1044,11 +1046,12 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             team_smtp = latest_team_config(db, team_id, "smtp_config")
             config = resolve_smtp(None if team_smtp is None else team_smtp.data, request.app.state.secret_key)
             public_base = str(config.get("public_base_url") or os.getenv("MANGEDONG_PUBLIC_URL") or "http://127.0.0.1:8000").rstrip("/")
+            invite_link = f"{public_base}/app#/invite?token={quote(invite_token, safe='')}"
             sent = send_mail(
                 config,
                 to_address=user.email,
                 subject="邀请加入 mangedong 团队",
-                body=f"你被邀请加入团队。在 {public_base}/app 登录页粘贴邀请令牌。\n令牌：{invite_token}",
+                body=f"你被邀请加入团队。打开链接接受邀请：\n{invite_link}",
             )
             record_audit_event(
                 db,
