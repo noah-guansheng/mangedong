@@ -96,3 +96,32 @@ textarea {
 .muted {
   color: #64748b;
 }
+
+.pill {
+  background: #dbeafe;
+  border-radius: 999px;
+  color: #1d4ed8;
+  display: inline-block;
+  font-size: 0.8rem;
+  margin: 0.15rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.kbd {
+  background: #0f172a;
+  border-radius: 6px;
+  color: white;
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.1rem 0.35rem;
+}
+
+.status-history {
+  color: #64748b;
+  font-size: 0.85rem;
+  margin-top: 1rem;
+}
+
+.status-history ol {
+  padding-left: 1.2rem;
+}

@@ -2,10 +2,12 @@ const state = {
   token: localStorage.getItem("md_token") || "",
   teamId: Number(localStorage.getItem("md_team_id") || 0),
   projectId: Number(localStorage.getItem("md_project_id") || 0),
+  statusHistory: [],
 };
 
 const view = document.getElementById("view");
 const statusBox = document.getElementById("status");
+const statusHistory = document.getElementById("status-history");
 
 document.querySelectorAll("[data-route]").forEach((button) => {
   button.addEventListener("click", () => renderRoute(button.dataset.route));
@@ -13,6 +15,9 @@ document.querySelectorAll("[data-route]").forEach((button) => {
 
 function setStatus(message) {
   statusBox.textContent = message;
+  state.statusHistory.unshift({ message, at: new Date().toLocaleTimeString() });
+  state.statusHistory = state.statusHistory.slice(0, 5);
+  statusHistory.innerHTML = `<ol>${state.statusHistory.map((entry) => `<li>${entry.at} - ${entry.message}</li>`).join("")}</ol>`;
 }
 
 async function api(path, options = {}) {
@@ -45,10 +50,28 @@ function renderRoute(route) {
     compliance: renderCompliance,
     p2: renderP2,
     ops: renderOps,
+    notifications: renderNotifications,
+    help: renderHelp,
     settings: renderSettings,
   };
   return (routes[route] || renderDashboard)();
 }
+
+document.addEventListener("keydown", (event) => {
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+  const shortcuts = {
+    d: "dashboard",
+    p: "pipeline",
+    i: "import",
+    c: "color",
+    t: "timeline",
+    a: "audio",
+    r: "reports",
+    o: "ops",
+    h: "help",
+  };
+  if (shortcuts[event.key]) renderRoute(shortcuts[event.key]);
+});
 
 function renderAuth() {
   view.innerHTML = `
@@ -565,6 +588,62 @@ async function renderOps() {
   document.getElementById("run-pending").addEventListener("click", () =>
     api(`/projects/${state.projectId}/ai-jobs/run-pending`, { method: "POST" }).then((jobs) => setStatus(`已处理 ${jobs.length} 个任务`)),
   );
+}
+
+async function renderNotifications() {
+  await ensureProject();
+  const [jobs, errors] = await Promise.all([
+    api(`/projects/${state.projectId}/ai-jobs`),
+    api(`/projects/${state.projectId}/error-logs`),
+  ]);
+  const failedJobs = jobs.filter((job) => ["failed", "cancelled"].includes(job.status));
+  view.innerHTML = `
+    <h2>通知中心</h2>
+    <section class="grid">
+      <article class="card">
+        <h3>任务通知</h3>
+        <p><span class="pill">${jobs.length} jobs</span><span class="pill">${failedJobs.length} attention</span></p>
+      </article>
+      <article class="card">
+        <h3>错误通知</h3>
+        <p><span class="pill">${errors.length} logs</span></p>
+      </article>
+      <article class="card">
+        <h3>最近状态</h3>
+        <ul>${state.statusHistory.map((entry) => `<li>${entry.at} - ${entry.message}</li>`).join("")}</ul>
+      </article>
+    </section>
+  `;
+  setStatus("通知中心已加载");
+}
+
+function renderHelp() {
+  view.innerHTML = `
+    <h2>帮助与快捷键</h2>
+    <section class="grid">
+      <article class="card">
+        <h3>快捷键</h3>
+        <p><span class="kbd">d</span> Dashboard</p>
+        <p><span class="kbd">p</span> 链路向导</p>
+        <p><span class="kbd">i</span> 导入</p>
+        <p><span class="kbd">c</span> 上色</p>
+        <p><span class="kbd">t</span> 时间线</p>
+        <p><span class="kbd">a</span> 音频</p>
+        <p><span class="kbd">r</span> 报表</p>
+        <p><span class="kbd">o</span> 运维</p>
+      </article>
+      <article class="card">
+        <h3>推荐流程</h3>
+        <ol>
+          <li>先在设置中确认 token、teamId、projectId。</li>
+          <li>使用链路向导创建默认生产任务。</li>
+          <li>导入漫画后进入上色和 Shot / Timeline。</li>
+          <li>完成音频字幕后进入审核导出。</li>
+        </ol>
+      </article>
+    </section>
+  `;
+  setStatus("帮助已加载");
 }
 
 function renderSettings() {

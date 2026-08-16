@@ -37,6 +37,8 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "链路向导" in app_page.text
     assert "报表" in app_page.text
     assert "合规下载" in app_page.text
+    assert "通知" in app_page.text
+    assert "帮助" in app_page.text
     assert "设置" in app_page.text
 
     script = client.get("/static/workbench.js")
@@ -62,6 +64,12 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "renderCompliance" in script.text
     assert "download-token-form" in script.text
     assert "freeze-export-form" in script.text
+    assert "renderNotifications" in script.text
+    assert "通知中心" in script.text
+    assert "renderHelp" in script.text
+    assert "帮助与快捷键" in script.text
+    assert "statusHistory" in script.text
+    assert "keydown" in script.text
     assert "renderSettings" in script.text
     assert "context-form" in script.text
     assert "renderP2" in script.text
