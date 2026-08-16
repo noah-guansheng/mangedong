@@ -46,6 +46,16 @@
 - AudioMix 生成本地 WAV
 - Export freeze 生成本地 ZIP 交付包
 - 完整 PRD P0 链路自动化测试
+- 本地存储意图接口
+- Workflow Published Parameters 编辑
+- 局部修正生成本地 PNG
+- 上色版本对比
+- 视频片段 A/B 对比
+- ReviewPackage
+- RevisionRequest
+- AcceptanceRecord
+- 上色审核、片段对比、客户审片页面
+- 增强项自动化测试
 
 ### 当前 RBAC
 
@@ -58,9 +68,9 @@
 
 1. 将占位 Provider 替换为真实第三方 AI API。
 2. 将 ComfyUI 健康检查和 test-run 替换为真实远程调用。
-3. 增加真实文件上传和对象存储抽象。
-4. 将 CBZ/ZIP 导入接入后端导入任务。
-5. 增加任务执行 worker。
+3. 将本地存储抽象替换为对象存储服务。
+4. 增加真实异步任务执行 worker。
+5. 将轻量 HTML 页面替换为完整前端工作台。
 
 ## Milestone 2：项目、导入和素材库
 
@@ -72,13 +82,11 @@
 - 素材库元数据模型
 - AIJob 队列基础
 
-待开发内容：
+增强方向：
 
-- 原始素材上传
 - 缩略图生成
-- CBZ/ZIP 导入接入后端
-- 导入任务执行
-- 对象存储抽象
+- 导入任务异步执行
+- 对象存储服务接入
 
 ## Milestone 3：ComfyUI Workflow Center
 
@@ -91,9 +99,8 @@
 - Published Parameters
 - 测试运行
 
-待开发内容：
+增强方向：
 
-- 真实节点输入编辑 UI
 - 真实 workflow 兼容性检查
 - 真实远程 ComfyUI `/prompt`、WebSocket、`/history` 集成
 
@@ -105,10 +112,9 @@
 - 角色档案
 - 批量参考上色任务
 
-待开发内容：
+增强方向：
 
 - 色彩档案细化
-- 真实局部修正任务
 - 上色版本对比 UI
 
 ## Milestone 5：Shot List、Animatic 和轻量时间线
@@ -120,7 +126,7 @@
 - Timeline
 - TimelineItem
 
-待开发内容：
+增强方向：
 
 - 一个 Panel 拆多个 Shot 的高级 UI
 - 多个 Panel 合并一个 Shot 的高级 UI
@@ -138,10 +144,7 @@
 - QCReport
 - ExportManifest
 
-待开发内容：
+增强方向：
 
 - Voice Bible 细化
-- ReviewPackage
-- RevisionRequest
-- AcceptanceRecord
 - 真实音频混音和导出包文件生成

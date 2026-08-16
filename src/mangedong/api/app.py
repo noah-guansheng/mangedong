@@ -400,6 +400,9 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
   <h2>工作台入口</h2>
   <a href="/ui/projects/{project.id}/ai-workflows">AI Workflow Center</a>
   <a href="/ui/projects/{project.id}/review-export">审核与导出</a>
+  <a href="/ui/projects/{project.id}/color-review">上色审核</a>
+  <a href="/ui/projects/{project.id}/clip-compare">片段对比</a>
+  <a href="/ui/projects/{project.id}/client-review">客户审片</a>
 </section>
 """,
         )
@@ -444,6 +447,61 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
   <div class="card"><h2>Review Comments</h2><p>{len(comments)} comments</p></div>
   <div class="card"><h2>QC Reports</h2><p>{len(qc_reports)} reports</p></div>
   <div class="card"><h2>Export Packages</h2><p>{len(exports)} exports</p></div>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/color-review", response_class=HTMLResponse)
+    def color_review_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        colorizations = list_project_resources(db, project.id, "colorization")
+        corrections = list_project_resources(db, project.id, "local_correction")
+        comparisons = list_project_resources(db, project.id, "color_comparison")
+        return render_page(
+            "上色审核",
+            f"""
+<header><h1>上色审核</h1><p class="muted">{escape(project.name)}</p></header>
+<section class="grid">
+  <div class="card"><h2>Colorizations</h2><p>{len(colorizations)} versions</p></div>
+  <div class="card"><h2>Local Corrections</h2><p>{len(corrections)} corrections</p></div>
+  <div class="card"><h2>Color Comparisons</h2><p>{len(comparisons)} comparisons</p></div>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/clip-compare", response_class=HTMLResponse)
+    def clip_compare_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        clips = list_project_resources(db, project.id, "video_clip")
+        comparisons = list_project_resources(db, project.id, "clip_comparison")
+        return render_page(
+            "片段对比",
+            f"""
+<header><h1>片段对比</h1><p class="muted">{escape(project.name)}</p></header>
+<section class="grid">
+  <div class="card"><h2>Video Clips</h2><p>{len(clips)} clips</p></div>
+  <div class="card"><h2>A/B Comparisons</h2><p>{len(comparisons)} comparisons</p></div>
+</section>
+""",
+        )
+
+    @api.get("/ui/projects/{project_id}/client-review", response_class=HTMLResponse)
+    def client_review_page(project_id: int, request: Request, db: DbSession) -> HTMLResponse:
+        user = require_cookie_user(request, db)
+        project = require_project_access(db, user.id, project_id)
+        packages = list_project_resources(db, project.id, "review_package")
+        revisions = list_project_resources(db, project.id, "revision_request")
+        acceptances = list_project_resources(db, project.id, "acceptance_record")
+        return render_page(
+            "客户审片",
+            f"""
+<header><h1>客户审片</h1><p class="muted">{escape(project.name)}</p></header>
+<section class="grid">
+  <div class="card"><h2>Review Packages</h2><p>{len(packages)} packages</p></div>
+  <div class="card"><h2>Revision Requests</h2><p>{len(revisions)} requests</p></div>
+  <div class="card"><h2>Acceptance Records</h2><p>{len(acceptances)} records</p></div>
 </section>
 """,
         )
@@ -924,10 +982,41 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         db.refresh(workflow)
         return workflow
 
+    @api.patch("/workflows/{workflow_id}/parameters", response_model=ProductionResourceRead)
+    def update_workflow_parameters(
+        workflow_id: int,
+        payload: ResourcePayload,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        workflow = get_resource(db, workflow_id, "workflow")
+        require_project_access(db, current_user.id, workflow.project_id or 0, PROJECT_WRITE_ROLES)
+        published = {**workflow.data.get("published_parameters", {}), **payload.data}
+        workflow.data = {**workflow.data, "published_parameters": published, "parsed": parse_workflow(workflow.data["workflow_json"], published)}
+        workflow.status = "parsed"
+        db.commit()
+        db.refresh(workflow)
+        return workflow
+
     @api.get("/projects/{project_id}/workflows", response_model=list[ProductionResourceRead])
     def list_workflows(project_id: int, current_user: CurrentUser, db: DbSession) -> list[ProductionResource]:
         require_project_access(db, current_user.id, project_id)
         return list_project_resources(db, project_id, "workflow")
+
+    @api.post("/projects/{project_id}/storage/presign", response_model=ProductionResourceRead)
+    def create_storage_intent(project_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        filename = safe_filename(str(payload.data.get("filename", "upload.bin")))
+        path = project_storage(request.app.state.storage_dir, project.id, "presigned", filename)
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="storage_intent",
+            status="ready",
+            data={"upload_uri": str(path), "method": "local_put", "expires_in_seconds": 900},
+            created_by_id=current_user.id,
+        )
 
     @api.post("/projects/{project_id}/references", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_reference(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
@@ -1032,6 +1121,56 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             created_by_id=current_user.id,
         )
 
+    @api.post("/colorizations/{colorization_id}/local-corrections", response_model=ProductionResourceRead)
+    def create_local_correction(
+        colorization_id: int,
+        payload: ResourcePayload,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        colorization = get_resource(db, colorization_id, "colorization")
+        require_project_access(db, current_user.id, colorization.project_id or 0, PROJECT_WRITE_ROLES)
+        from PIL import Image, ImageEnhance
+
+        source = Image.open(colorization.data["output_asset_uri"]).convert("RGB")
+        corrected = ImageEnhance.Color(source).enhance(float(payload.data.get("saturation", 1.15)))
+        corrected = ImageEnhance.Brightness(corrected).enhance(float(payload.data.get("brightness", 1.03)))
+        output_path = project_storage(request.app.state.storage_dir, colorization.project_id or 0, "corrections", f"colorization-{colorization.id}.png")
+        corrected.save(output_path)
+        return create_resource(
+            db,
+            team_id=colorization.team_id,
+            project_id=colorization.project_id,
+            resource_type="local_correction",
+            status="accepted",
+            data={"source_colorization_id": colorization.id, "output_asset_uri": str(output_path), "adjustments": payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/colorizations/{colorization_id}/compare", response_model=ProductionResourceRead)
+    def compare_color_versions(
+        colorization_id: int,
+        payload: ResourcePayload,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        base = get_resource(db, colorization_id)
+        other_id = int(payload.data["other_resource_id"])
+        other = get_resource(db, other_id)
+        require_project_access(db, current_user.id, base.project_id or 0)
+        if base.project_id != other.project_id:
+            raise HTTPException(status_code=400, detail="Cannot compare resources from different projects.")
+        return create_resource(
+            db,
+            team_id=base.team_id,
+            project_id=base.project_id,
+            resource_type="color_comparison",
+            status="completed",
+            data={"base_id": base.id, "other_id": other.id, "diff_summary": "mock visual diff completed"},
+            created_by_id=current_user.id,
+        )
+
     @api.post("/panels/{panel_id}/generate-video", response_model=ProductionResourceRead)
     def generate_panel_video(panel_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
@@ -1075,6 +1214,28 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
                 "duration_seconds": duration,
                 "fps": fps,
                 "frame_count": len(frame_paths),
+            },
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/video-clips/{clip_id}/compare", response_model=ProductionResourceRead)
+    def compare_video_clips(clip_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        base = get_resource(db, clip_id, "video_clip")
+        other = get_resource(db, int(payload.data["other_clip_id"]), "video_clip")
+        require_project_access(db, current_user.id, base.project_id or 0)
+        if base.project_id != other.project_id:
+            raise HTTPException(status_code=400, detail="Cannot compare clips from different projects.")
+        return create_resource(
+            db,
+            team_id=base.team_id,
+            project_id=base.project_id,
+            resource_type="clip_comparison",
+            status="completed",
+            data={
+                "base_clip_id": base.id,
+                "other_clip_id": other.id,
+                "comparison_mode": payload.data.get("mode", "ab_sync"),
+                "diff_summary": "mock clip comparison completed",
             },
             created_by_id=current_user.id,
         )
@@ -1229,6 +1390,61 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             data=payload.model_dump(mode="json"),
             created_by_id=current_user.id,
         )
+
+    @api.post("/projects/{project_id}/review-packages", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_review_package(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, {"owner", "admin", "producer", "reviewer"})
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="review_package",
+            status="internal_reviewing",
+            data={"package_type": payload.data.get("package_type", "internal_preview"), **payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/review-packages/{review_package_id}/revision-requests", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_revision_request(
+        review_package_id: int,
+        payload: ResourcePayload,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        package = get_resource(db, review_package_id, "review_package")
+        project = require_project_access(db, current_user.id, package.project_id or 0, {"owner", "admin", "producer", "reviewer"})
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="revision_request",
+            status="open",
+            data={"review_package_id": package.id, "revision_round": payload.data.get("revision_round", 1), **payload.data},
+            created_by_id=current_user.id,
+        )
+
+    @api.post("/review-packages/{review_package_id}/acceptance-records", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    def create_acceptance_record(
+        review_package_id: int,
+        payload: ResourcePayload,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
+        package = get_resource(db, review_package_id, "review_package")
+        project = require_project_access(db, current_user.id, package.project_id or 0, {"owner", "admin", "producer", "reviewer"})
+        package.status = "client_approved"
+        record = create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="acceptance_record",
+            status="accepted",
+            data={"review_package_id": package.id, "accepted_at": utc_now().isoformat(), **payload.data},
+            created_by_id=current_user.id,
+        )
+        db.add(package)
+        db.commit()
+        return record
 
     @api.post("/projects/{project_id}/qc-reports", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
     def create_qc_report(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
