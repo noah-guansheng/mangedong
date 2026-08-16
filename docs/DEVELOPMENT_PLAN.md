@@ -33,12 +33,18 @@
 - ComfyUI 实例配置和健康检查
 - Workflow 上传、解析、Published Parameters 和测试运行
 - 参考图和角色资源
-- OCR、AI 分析、参考上色、批量上色占位任务
-- 单分格视频生成占位任务
+- OCR、AI 分析 mock 任务
+- 参考上色任务，生成本地 PNG
+- 批量上色任务
+- 单分格视频生成任务，生成本地 MP4
 - Shot List 和 Animatic
 - 最小装配时间线
 - DialogueLine、VoiceLine、SubtitleCue、MusicCue、AudioMix
 - ReviewComment、QCReport、Export、Preflight、Freeze
+- VoiceLine 生成本地 WAV
+- SubtitleCue 生成本地 SRT
+- AudioMix 生成本地 WAV
+- Export freeze 生成本地 ZIP 交付包
 - 完整 PRD P0 链路自动化测试
 
 ### 当前 RBAC

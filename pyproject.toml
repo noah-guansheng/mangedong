@@ -14,6 +14,7 @@ dependencies = [
   "imageio[ffmpeg]",
   "numpy",
   "pillow",
+  "python-multipart",
   "sqlalchemy",
   "typer",
   "uvicorn",

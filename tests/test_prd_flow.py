@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+from io import BytesIO
+from pathlib import Path
 from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image, ImageDraw
 
 from mangedong.api.app import create_app
 
 
 @pytest.fixture()
-def client() -> Iterator[TestClient]:
-    app = create_app(database_url="sqlite://", secret_key="prd-flow-secret")
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    app = create_app(database_url="sqlite://", secret_key="prd-flow-secret", storage_dir=tmp_path / "storage")
     with TestClient(app) as test_client:
         yield test_client
 
@@ -64,25 +67,23 @@ def test_prd_p0_workflow_from_provider_to_frozen_export(client: TestClient) -> N
     )
     assert character.status_code == 201
 
-    chapter_id = client.post(
-        f"/projects/{project_id}/chapters",
-        json={"title": "Chapter 1", "source_language": "zh"},
+    import_result = client.post(
+        f"/projects/{project_id}/imports/manga",
+        files={"file": ("page.png", _demo_page_png(), "image/png")},
+        data={"chapter_title": "Chapter 1"},
         headers=_auth(token),
-    ).json()["id"]
-    page_id = client.post(
-        f"/chapters/{chapter_id}/pages",
-        json={"page_number": 1, "image_uri": "s3://pages/001.png"},
-        headers=_auth(token),
-    ).json()["id"]
-    panel_id = client.post(
-        f"/pages/{page_id}/panels",
-        json={"panel_index": 1, "bbox": {"x": 0, "y": 0, "width": 100, "height": 100}},
-        headers=_auth(token),
-    ).json()["id"]
+    )
+    assert import_result.status_code == 201
+    imported_page = import_result.json()["data"]["pages"][0]
+    page_id = imported_page["page_id"]
+    panel_id = imported_page["panel_id"]
+    assert Path(imported_page["image_uri"]).exists()
 
     assert client.post(f"/panels/{panel_id}/ocr", headers=_auth(token)).json()["resource_type"] == "dialogue_line"
     assert client.post(f"/panels/{panel_id}/analyze", headers=_auth(token)).json()["resource_type"] == "analysis"
-    assert client.post(f"/panels/{panel_id}/colorize", json={"data": {"palette": "cel"}}, headers=_auth(token)).json()["status"] == "succeeded"
+    colorized = client.post(f"/panels/{panel_id}/colorize", json={"data": {"palette": "cel"}}, headers=_auth(token)).json()
+    assert colorized["status"] == "succeeded"
+    assert Path(colorized["data"]["output_asset_uri"]).exists()
     assert client.post(f"/projects/{project_id}/batch-colorize", json={"data": {"scope": "chapter-1", "estimated_items": 1}}, headers=_auth(token)).json()["status"] == "queued"
     video_clip = client.post(
         f"/panels/{panel_id}/generate-video",
@@ -90,6 +91,7 @@ def test_prd_p0_workflow_from_provider_to_frozen_export(client: TestClient) -> N
         headers=_auth(token),
     )
     assert video_clip.json()["resource_type"] == "video_clip"
+    assert Path(video_clip.json()["data"]["output_asset_uri"]).exists()
 
     shot = client.post(
         f"/projects/{project_id}/shots",
@@ -112,10 +114,20 @@ def test_prd_p0_workflow_from_provider_to_frozen_export(client: TestClient) -> N
         json={"speaker_id": "hero", "line_type": "dialogue", "source_language": "zh", "edited_text": "开始吧"},
         headers=_auth(token),
     ).json()["id"]
-    assert client.post(f"/dialogue-lines/{dialogue_id}/voice", json={"data": {"voice": "hero-zh"}}, headers=_auth(token)).json()["resource_type"] == "voice_line"
-    assert client.post(f"/dialogue-lines/{dialogue_id}/subtitle", json={"data": {"text": "开始吧", "start": 0, "end": 2}}, headers=_auth(token)).json()["resource_type"] == "subtitle_cue"
+    voice = client.post(f"/dialogue-lines/{dialogue_id}/voice", json={"data": {"voice": "hero-zh"}}, headers=_auth(token)).json()
+    assert voice["resource_type"] == "voice_line"
+    assert Path(voice["data"]["audio_uri"]).exists()
+    subtitle = client.post(
+        f"/dialogue-lines/{dialogue_id}/subtitle",
+        json={"data": {"text": "开始吧", "start": 0, "end": 2}},
+        headers=_auth(token),
+    ).json()
+    assert subtitle["resource_type"] == "subtitle_cue"
+    assert Path(subtitle["data"]["subtitle_uri"]).exists()
     assert client.post(f"/projects/{project_id}/music-cues", json={"data": {"asset_uri": "s3://bgm/theme.wav"}}, headers=_auth(token)).json()["resource_type"] == "music_cue"
-    assert client.post(f"/projects/{project_id}/audio-mixes", json={"data": {"loudness_target": "-16 LUFS"}}, headers=_auth(token)).json()["status"] == "rendered"
+    mix = client.post(f"/projects/{project_id}/audio-mixes", json={"data": {"loudness_target": "-16 LUFS"}}, headers=_auth(token)).json()
+    assert mix["status"] == "rendered"
+    assert Path(mix["data"]["mix_uri"]).exists()
 
     comment = client.post(
         "/review-comments",
@@ -131,6 +143,7 @@ def test_prd_p0_workflow_from_provider_to_frozen_export(client: TestClient) -> N
     assert preflight.json()["status"] == "qc_passed"
     frozen = client.post(f"/exports/{export_id}/freeze", headers=_auth(token))
     assert frozen.json()["status"] == "frozen"
+    assert Path(frozen.json()["data"]["package_uri"]).exists()
 
     ai_page = client.get(f"/ui/projects/{project_id}/ai-workflows")
     assert ai_page.status_code == 200
@@ -154,6 +167,17 @@ def _register_and_login(client: TestClient, email: str) -> str:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _demo_page_png() -> bytes:
+    image = Image.new("L", (160, 220), 245)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((10, 10, 150, 100), outline=10, width=3)
+    draw.rectangle((10, 120, 150, 210), outline=10, width=3)
+    draw.ellipse((55, 25, 105, 75), outline=20, width=3)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _project_payload(team_id: int) -> dict[str, object]:

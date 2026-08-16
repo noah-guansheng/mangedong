@@ -83,26 +83,27 @@
 - workflow test-run
 - 参考图创建
 - 角色资源创建
-- 章节、页面、分格创建
+- 漫画图片上传和导入
+- 章节、页面、分格自动创建
 - OCR 占位任务
 - AI 分析占位任务
-- 参考上色占位任务
+- 参考上色任务，并生成本地 PNG 文件
 - 批量上色任务
-- 单分格视频生成
+- 单分格视频生成，并生成本地 MP4 文件
 - Shot 创建
 - Animatic 生成
 - Timeline 创建
 - TimelineItem 添加
 - DialogueLine 创建
-- VoiceLine 生成
-- SubtitleCue 创建
+- VoiceLine 生成，并生成本地 WAV 文件
+- SubtitleCue 创建，并生成本地 SRT 文件
 - MusicCue 创建
-- AudioMix 创建
+- AudioMix 创建，并生成本地 WAV 文件
 - ReviewComment 创建
 - QCReport 创建
 - Export 创建
 - Export preflight
-- Export freeze
+- Export freeze，并生成本地 ZIP 交付包
 - AI Workflow Center 页面渲染
 - Review / Export 页面渲染
 
@@ -124,6 +125,7 @@ tests/test_prd_flow.py .                                                 [100%]
 - 本轮新增后端生产对象通过 API 自动化测试。
 - 本轮新增 Web 工作台页面通过页面自动化测试。
 - PRD P0 主链路通过端到端 API + 页面自动化测试。
+- 外部接入使用 mock，但内部功能会生成真实本地产物文件。
 - 既有漫画转动漫 CLI 管道未出现回归。
 - 当前测试不只是接口测试，已包含对应 Web 页面渲染自动化测试。
 

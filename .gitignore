@@ -8,3 +8,4 @@ build/
 runs/
 *.mp4
 mangedong.db
+mangedong_storage/

@@ -66,6 +66,7 @@ python3 -m uvicorn "mangedong.api.app:create_app" --factory --reload
 ```bash
 MANGEDONG_DATABASE_URL="sqlite:///./mangedong.db"
 MANGEDONG_SECRET_KEY="change-me"
+MANGEDONG_STORAGE_DIR="./mangedong_storage"
 ```
 
 当前已实现的第一轮 API：
@@ -89,6 +90,8 @@ MANGEDONG_SECRET_KEY="change-me"
 - `GET /projects/{project_id}`
 - `POST /projects/{project_id}/assets`
 - `GET /projects/{project_id}/assets`
+- `POST /projects/{project_id}/uploads`
+- `POST /projects/{project_id}/imports/manga`
 - `POST /projects/{project_id}/chapters`
 - `GET /projects/{project_id}/chapters`
 - `POST /chapters/{chapter_id}/pages`

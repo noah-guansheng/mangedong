@@ -3,15 +3,17 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from html import escape
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from mangedong.animate import KenBurnsAnimator
 from mangedong.api.db import build_session_factory, init_db, session_scope
 from mangedong.api.entities import (
     AIJob,
@@ -65,6 +67,10 @@ from mangedong.api.schemas import (
     WorkItemRead,
 )
 from mangedong.api.security import create_access_token, hash_password, parse_access_token, verify_password
+from mangedong.api.services import project_storage, safe_filename, write_export_package, write_mock_wav, write_srt
+from mangedong.colorize import AlgorithmicColorizer
+from mangedong.export import VideoExporter
+from mangedong.importer import import_pages
 
 
 DEFAULT_DATABASE_URL = "sqlite:///./mangedong.db"
@@ -277,13 +283,15 @@ def require_cookie_user(request: Request, db: Session) -> User:
     return user
 
 
-def create_app(database_url: str | None = None, secret_key: str | None = None) -> FastAPI:
+def create_app(database_url: str | None = None, secret_key: str | None = None, storage_dir: str | Path | None = None) -> FastAPI:
     session_factory = build_session_factory(database_url or os.getenv("MANGEDONG_DATABASE_URL", DEFAULT_DATABASE_URL))
     init_db(session_factory)
 
     api = FastAPI(title="mangedong Web SaaS API", version="0.1.0")
     api.state.session_factory = session_factory
     api.state.secret_key = secret_key or os.getenv("MANGEDONG_SECRET_KEY", "dev-secret-change-me")
+    api.state.storage_dir = Path(storage_dir or os.getenv("MANGEDONG_STORAGE_DIR", "./mangedong_storage")).resolve()
+    api.state.storage_dir.mkdir(parents=True, exist_ok=True)
 
     @api.get("/health")
     def health() -> dict[str, str]:
@@ -569,6 +577,94 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
     def list_assets(project_id: int, current_user: CurrentUser, db: DbSession) -> list[Asset]:
         require_project_access(db, current_user.id, project_id)
         return list(db.scalars(select(Asset).where(Asset.project_id == project_id).order_by(Asset.created_at.desc())))
+
+    @api.post("/projects/{project_id}/uploads", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
+    async def upload_asset(
+        project_id: int,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+        file: UploadFile = File(...),
+        asset_type: str = Form("manga_page"),
+    ) -> Asset:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        filename = safe_filename(file.filename or "upload.bin")
+        path = project_storage(request.app.state.storage_dir, project.id, "uploads", filename)
+        path.write_bytes(await file.read())
+        asset = Asset(
+            team_id=project.team_id,
+            project_id=project.id,
+            name=filename,
+            asset_type=asset_type,
+            uri=str(path),
+            asset_metadata={"content_type": file.content_type},
+            created_by_id=current_user.id,
+        )
+        db.add(asset)
+        db.commit()
+        db.refresh(asset)
+        return asset
+
+    @api.post("/projects/{project_id}/imports/manga", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
+    async def import_manga_upload(
+        project_id: int,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+        file: UploadFile = File(...),
+        chapter_title: str = Form("Imported Chapter"),
+    ) -> ProductionResource:
+        project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        filename = safe_filename(file.filename or "manga.png")
+        upload_path = project_storage(request.app.state.storage_dir, project.id, "imports", filename)
+        upload_path.write_bytes(await file.read())
+        pages = import_pages(upload_path)
+        chapter = Chapter(
+            team_id=project.team_id,
+            project_id=project.id,
+            title=chapter_title,
+            source_language=project.brief.get("target_languages", ["zh"])[0],
+            status="imported",
+            created_by_id=current_user.id,
+        )
+        db.add(chapter)
+        db.flush()
+        created_pages = []
+        for page in pages:
+            page_path = project_storage(request.app.state.storage_dir, project.id, "pages", f"{chapter.id}-{page.page_index + 1}.png")
+            page.image.save(page_path)
+            manga_page = MangaPage(
+                team_id=project.team_id,
+                project_id=project.id,
+                chapter_id=chapter.id,
+                page_number=page.page_index + 1,
+                image_uri=str(page_path),
+                created_by_id=current_user.id,
+            )
+            db.add(manga_page)
+            db.flush()
+            panel = Panel(
+                team_id=project.team_id,
+                project_id=project.id,
+                chapter_id=chapter.id,
+                page_id=manga_page.id,
+                panel_index=1,
+                bbox={"x": 0, "y": 0, "width": page.image.width, "height": page.image.height},
+                created_by_id=current_user.id,
+            )
+            db.add(panel)
+            db.flush()
+            created_pages.append({"page_id": manga_page.id, "panel_id": panel.id, "image_uri": str(page_path)})
+        db.commit()
+        return create_resource(
+            db,
+            team_id=project.team_id,
+            project_id=project.id,
+            resource_type="import",
+            status="succeeded",
+            data={"chapter_id": chapter.id, "page_count": len(created_pages), "pages": created_pages, "source_uri": str(upload_path)},
+            created_by_id=current_user.id,
+        )
 
     @api.post("/projects/{project_id}/chapters", response_model=ChapterRead, status_code=status.HTTP_201_CREATED)
     def create_chapter(project_id: int, payload: ChapterCreate, current_user: CurrentUser, db: DbSession) -> Chapter:
@@ -892,15 +988,34 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
         )
 
     @api.post("/panels/{panel_id}/colorize", response_model=ProductionResourceRead)
-    def colorize_panel(panel_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def colorize_panel(panel_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        page = db.get(MangaPage, panel.page_id)
+        if page is None:
+            raise HTTPException(status_code=404, detail="Page not found.")
+        from PIL import Image
+
+        image = Image.open(page.image_uri).convert("RGB")
+        bbox = panel.bbox
+        cropped = image.crop(
+            (
+                int(bbox.get("x", 0)),
+                int(bbox.get("y", 0)),
+                int(bbox.get("x", 0)) + int(bbox.get("width", image.width)),
+                int(bbox.get("y", 0)) + int(bbox.get("height", image.height)),
+            )
+        )
+        palette = payload.data.get("palette", "cel")
+        colorized = AlgorithmicColorizer(palette=palette).colorize(cropped)
+        output_path = project_storage(request.app.state.storage_dir, panel.project_id, "colorized", f"panel-{panel.id}.png")
+        colorized.save(output_path)
         return create_resource(
             db,
             team_id=panel.team_id,
             project_id=panel.project_id,
             resource_type="colorization",
             status="succeeded",
-            data={"panel_id": panel.id, "palette": payload.data.get("palette", "cel"), "output_asset_uri": f"mock://colorized/{panel.id}.png"},
+            data={"panel_id": panel.id, "palette": palette, "output_asset_uri": str(output_path)},
             created_by_id=current_user.id,
         )
 
@@ -918,8 +1033,35 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
         )
 
     @api.post("/panels/{panel_id}/generate-video", response_model=ProductionResourceRead)
-    def generate_panel_video(panel_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def generate_panel_video(panel_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         panel = require_panel_access(db, current_user.id, panel_id, PROJECT_WRITE_ROLES)
+        from PIL import Image
+
+        colorization = next(
+            (
+                resource
+                for resource in list_project_resources(db, panel.project_id, "colorization")
+                if resource.data.get("panel_id") == panel.id
+            ),
+            None,
+        )
+        if colorization is not None:
+            source_image = Image.open(colorization.data["output_asset_uri"]).convert("RGB")
+        else:
+            page = db.get(MangaPage, panel.page_id)
+            if page is None:
+                raise HTTPException(status_code=404, detail="Page not found.")
+            source_image = AlgorithmicColorizer().colorize(Image.open(page.image_uri).convert("RGB"))
+        duration = float(payload.data.get("duration_seconds", 3))
+        fps = int(payload.data.get("fps", 8))
+        frame_dir = project_storage(request.app.state.storage_dir, panel.project_id, "frames", f"panel-{panel.id}") / "frames"
+        frame_paths = KenBurnsAnimator(duration_seconds=duration, fps=fps, width=int(payload.data.get("width", 480))).render_frames(
+            source_image,
+            frame_dir,
+            f"panel_{panel.id}",
+        )
+        output_path = project_storage(request.app.state.storage_dir, panel.project_id, "videos", f"panel-{panel.id}.mp4")
+        VideoExporter().export(frame_paths, output_path, fps=fps)
         return create_resource(
             db,
             team_id=panel.team_id,
@@ -929,8 +1071,10 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
             data={
                 "panel_id": panel.id,
                 "provider": payload.data.get("provider", "mock_video"),
-                "output_asset_uri": f"mock://video-clips/{panel.id}.mp4",
-                "duration_seconds": payload.data.get("duration_seconds", 3),
+                "output_asset_uri": str(output_path),
+                "duration_seconds": duration,
+                "fps": fps,
+                "frame_count": len(frame_paths),
             },
             created_by_id=current_user.id,
         )
@@ -1000,30 +1144,47 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
         )
 
     @api.post("/dialogue-lines/{dialogue_line_id}/voice", response_model=ProductionResourceRead)
-    def generate_voice_line(dialogue_line_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def generate_voice_line(
+        dialogue_line_id: int,
+        payload: ResourcePayload,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
         dialogue = get_resource(db, dialogue_line_id, "dialogue_line")
         require_project_access(db, current_user.id, dialogue.project_id or 0, PROJECT_WRITE_ROLES)
+        audio_path = project_storage(request.app.state.storage_dir, dialogue.project_id or 0, "voice", f"dialogue-{dialogue.id}.wav")
+        write_mock_wav(audio_path, duration_seconds=float(payload.data.get("duration_seconds", 1.2)), frequency=440.0)
         return create_resource(
             db,
             team_id=dialogue.team_id,
             project_id=dialogue.project_id,
             resource_type="voice_line",
             status="generated",
-            data={"dialogue_line_id": dialogue.id, "voice": payload.data.get("voice", "default"), "audio_uri": f"mock://voice/{dialogue.id}.wav"},
+            data={"dialogue_line_id": dialogue.id, "voice": payload.data.get("voice", "default"), "audio_uri": str(audio_path)},
             created_by_id=current_user.id,
         )
 
     @api.post("/dialogue-lines/{dialogue_line_id}/subtitle", response_model=ProductionResourceRead)
-    def create_subtitle_cue(dialogue_line_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def create_subtitle_cue(
+        dialogue_line_id: int,
+        payload: ResourcePayload,
+        request: Request,
+        current_user: CurrentUser,
+        db: DbSession,
+    ) -> ProductionResource:
         dialogue = get_resource(db, dialogue_line_id, "dialogue_line")
         require_project_access(db, current_user.id, dialogue.project_id or 0, PROJECT_WRITE_ROLES)
+        subtitle_path = project_storage(request.app.state.storage_dir, dialogue.project_id or 0, "subtitles", f"dialogue-{dialogue.id}.srt")
+        text = str(payload.data.get("text") or dialogue.data.get("edited_text") or dialogue.data.get("ocr_text") or "")
+        write_srt(subtitle_path, text=text, start=float(payload.data.get("start", 0)), end=float(payload.data.get("end", 2)))
         return create_resource(
             db,
             team_id=dialogue.team_id,
             project_id=dialogue.project_id,
             resource_type="subtitle_cue",
             status="approved",
-            data={"dialogue_line_id": dialogue.id, **payload.data},
+            data={"dialogue_line_id": dialogue.id, "subtitle_uri": str(subtitle_path), **payload.data},
             created_by_id=current_user.id,
         )
 
@@ -1041,15 +1202,17 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
         )
 
     @api.post("/projects/{project_id}/audio-mixes", response_model=ProductionResourceRead, status_code=status.HTTP_201_CREATED)
-    def create_audio_mix(project_id: int, payload: ResourcePayload, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def create_audio_mix(project_id: int, payload: ResourcePayload, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         project = require_project_access(db, current_user.id, project_id, PROJECT_WRITE_ROLES)
+        mix_path = project_storage(request.app.state.storage_dir, project.id, "audio-mixes", "final-mix.wav")
+        write_mock_wav(mix_path, duration_seconds=float(payload.data.get("duration_seconds", 2.0)), frequency=330.0)
         return create_resource(
             db,
             team_id=project.team_id,
             project_id=project.id,
             resource_type="audio_mix",
             status="rendered",
-            data={"mix_uri": f"mock://audio-mixes/{project.id}.wav", **payload.data},
+            data={"mix_uri": str(mix_path), **payload.data},
             created_by_id=current_user.id,
         )
 
@@ -1113,12 +1276,15 @@ def create_app(database_url: str | None = None, secret_key: str | None = None) -
         return export
 
     @api.post("/exports/{export_id}/freeze", response_model=ProductionResourceRead)
-    def freeze_export(export_id: int, current_user: CurrentUser, db: DbSession) -> ProductionResource:
+    def freeze_export(export_id: int, request: Request, current_user: CurrentUser, db: DbSession) -> ProductionResource:
         export = get_resource(db, export_id, "export")
         require_project_access(db, current_user.id, export.project_id or 0, {"owner", "admin", "producer"})
         if export.status != "qc_passed":
             raise HTTPException(status_code=409, detail="Export must pass preflight before freeze.")
+        package_path = project_storage(request.app.state.storage_dir, export.project_id or 0, "exports", f"export-{export.id}.zip")
+        write_export_package(package_path, export.data.get("manifest", {}))
         export.status = "frozen"
+        export.data = {**export.data, "package_uri": str(package_path)}
         db.commit()
         db.refresh(export)
         return export
