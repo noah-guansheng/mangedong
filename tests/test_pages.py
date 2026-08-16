@@ -40,6 +40,18 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "通知" in app_page.text
     assert "帮助" in app_page.text
     assert "设置" in app_page.text
+    assert 'class="topbar"' in app_page.text
+    assert 'class="rail"' in app_page.text
+    assert "配置 AI Key / ComfyUI" in app_page.text
+    assert 'id="command-palette"' in app_page.text
+    assert 'id="setup-banner"' in app_page.text
+
+    styles = client.get("/static/styles.css")
+    assert styles.status_code == 200
+    assert "IBM Plex Sans" in styles.text
+    assert "--accent:" in styles.text
+    assert "Inter" not in styles.text
+    assert "#4f46e5" not in styles.text
 
     script = client.get("/static/workbench.js")
     assert script.status_code == 200
@@ -79,6 +91,9 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "renderSettings" in script.text
     assert "context-form" in script.text
     assert "renderP2" in script.text
+    assert "就在这一页" in script.text
+    assert "auth-gate" in script.text
+    assert "command-palette" in script.text or "openPalette" in script.text
 
 
 def test_dashboard_projects_and_production_pages_render(client: TestClient) -> None:

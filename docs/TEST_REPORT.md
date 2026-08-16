@@ -69,8 +69,10 @@
 - 项目生产页渲染 Work Items 区域
 - 项目生产页渲染 Production Gates 区域
 - 项目生产页渲染 AI Jobs 区域
-- `/app` SPA 壳渲染
+- `/app` SPA 壳渲染：顶栏、分组导航、命令盘、模型配置入口
 - `/static/workbench.js` 加载
+- `/static/styles.css` 不为 Inter / indigo 默认皮肤
+- 前端脚本包含 AI Provider API Key 与 ComfyUI 地址表单，并标明「就在这一页」
 - 前端脚本包含 Dashboard、AI、P2 路由
 - 前端脚本包含漫画导入、上色生产、Shot / Timeline、音频字幕路由
 - 前端脚本包含对应生产表单：导入、上色、Shot、Dialogue

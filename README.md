@@ -75,6 +75,10 @@ MANGEDONG_STORAGE_DIR="./mangedong_storage"
 http://localhost:8000/app
 ```
 
+工作台是顶栏 + 分组导航的生产界面，不是侧栏按钮列表。
+
+第三方 **API Key** 和 **ComfyUI 地址** 只在顶栏「配置 AI Key / ComfyUI」或左侧系统组的「AI / ComfyUI」页填写，不在设置页。
+
 当前 SPA 工作台模块：
 
 - 登录 / 注册

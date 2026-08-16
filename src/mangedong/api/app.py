@@ -283,27 +283,19 @@ def current_user_from_cookie(request: Request, db: Session) -> User | None:
 
 def render_page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
-        """
-<!doctype html>
+        f"""<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
-    <style>
-      body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #f8fafc; color: #0f172a; }}
-      header, section {{ background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }}
-      a {{ color: #2563eb; }}
-      .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }}
-      .card {{ border: 1px solid #e2e8f0; border-radius: 10px; padding: 1rem; }}
-      .muted {{ color: #64748b; }}
-    </style>
+    <title>{escape(title)}</title>
+    <link rel="stylesheet" href="/static/styles.css" />
   </head>
-  <body>
+  <body class="server-doc">
     {body}
+    <p class="muted"><a href="/app">打开完整工作台</a></p>
   </body>
-</html>
-""".format(title=escape(title), body=body)
+</html>"""
     )
 
 
@@ -340,13 +332,13 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             "mangedong 登录",
             """
 <header>
+  <p class="kicker">Studio workbench</p>
   <h1>mangedong 工作台</h1>
-  <p class="muted">团队/工作室漫画转番剧动画 Web SaaS。</p>
+  <p class="muted">团队/工作室漫画转番剧动画 Web SaaS。完整操作请进入 /app。</p>
 </header>
 <section>
   <h2>登录</h2>
-  <p>当前页面用于工作台自动化测试和前端接入占位。</p>
-  <form aria-label="login-form">
+  <form aria-label="login-form" class="surface">
     <label>Email <input name="email" type="email" /></label>
     <label>Password <input name="password" type="password" /></label>
   </form>
@@ -365,20 +357,21 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
                 .order_by(Team.created_at.desc())
             )
         )
-        cards = "".join(
-            f'<div class="card"><h3>{escape(team.name)}</h3><a href="/ui/projects?team_id={team.id}">进入项目</a></div>'
+        rows = "".join(
+            f'<tr><td>{escape(team.name)}</td><td><a href="/ui/projects?team_id={team.id}">进入项目</a></td></tr>'
             for team in teams
         )
         return render_page(
             "Dashboard",
             f"""
 <header>
+  <p class="kicker">Overview</p>
   <h1>Dashboard</h1>
   <p class="muted">欢迎，{escape(user.display_name)}。</p>
 </header>
 <section>
   <h2>团队空间</h2>
-  <div class="grid">{cards or '<p class="muted">暂无团队。</p>'}</div>
+  {f'<table class="data-table"><thead><tr><th>团队</th><th></th></tr></thead><tbody>{rows}</tbody></table>' if rows else '<p class="muted">暂无团队。</p>'}
 </section>
 """,
         )
@@ -389,21 +382,22 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         require_team_membership(db, user.id, team_id)
         team = db.get(Team, team_id)
         projects = list(db.scalars(select(Project).where(Project.team_id == team_id).order_by(Project.created_at.desc())))
-        cards = "".join(
-            f'<div class="card"><h3>{escape(project.name)}</h3><p>Status: {escape(project.status)}</p>'
-            f'<a href="/ui/projects/{project.id}/production">生产工作台</a></div>'
+        rows = "".join(
+            f'<tr><td>{escape(project.name)}</td><td>{escape(project.status)}</td>'
+            f'<td><a href="/ui/projects/{project.id}/production">生产工作台</a></td></tr>'
             for project in projects
         )
         return render_page(
             "项目列表",
             f"""
 <header>
+  <p class="kicker">Projects</p>
   <h1>{escape(team.name if team else "团队")} 项目</h1>
   <a href="/ui/dashboard">返回 Dashboard</a>
 </header>
 <section>
   <h2>项目列表</h2>
-  <div class="grid">{cards or '<p class="muted">暂无项目。</p>'}</div>
+  {f'<table class="data-table"><thead><tr><th>名称</th><th>状态</th><th></th></tr></thead><tbody>{rows}</tbody></table>' if rows else '<p class="muted">暂无项目。</p>'}
 </section>
 """,
         )
@@ -423,26 +417,33 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             f"{project.name} 生产工作台",
             f"""
 <header>
+  <p class="kicker">Floor</p>
   <h1>{escape(project.name)} 生产工作台</h1>
   <p class="muted">Project Brief：{escape(project.brief.get("ip_name", ""))}</p>
 </header>
-<section class="grid">
-  <div class="card"><h2>素材库</h2><p>{len(assets)} assets</p></div>
-  <div class="card"><h2>章节</h2><p>{len(chapters)} chapters</p></div>
-  <div class="card"><h2>Work Items</h2><p>{len(work_items)} open items</p></div>
-  <div class="card"><h2>Production Gates</h2><p>{len(gates)} gates</p></div>
-  <div class="card"><h2>AI Jobs</h2><p>{len(jobs)} jobs</p></div>
+<section>
+  <table class="data-table">
+    <thead><tr><th>模块</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>素材库</td><td>{len(assets)} assets</td></tr>
+      <tr><td>章节</td><td>{len(chapters)} chapters</td></tr>
+      <tr><td>Work Items</td><td>{len(work_items)} open items</td></tr>
+      <tr><td>Production Gates</td><td>{len(gates)} gates</td></tr>
+      <tr><td>AI Jobs</td><td>{len(jobs)} jobs</td></tr>
+    </tbody>
+  </table>
 </section>
 <section>
   <h2>工作台入口</h2>
-  <a href="/ui/projects/{project.id}/ai-workflows">AI Workflow Center</a>
-  <a href="/ui/projects/{project.id}/review-export">审核与导出</a>
-  <a href="/ui/projects/{project.id}/color-review">上色审核</a>
-  <a href="/ui/projects/{project.id}/clip-compare">片段对比</a>
-  <a href="/ui/projects/{project.id}/client-review">客户审片</a>
-  <a href="/ui/projects/{project.id}/errors">错误日志</a>
-  <a href="/ui/projects/{project.id}/p2-admin">P2 管理</a>
-  <a href="/ui/projects/{project.id}/ops">运维与 Worker</a>
+  <p><a href="/ui/projects/{project.id}/ai-workflows">AI Workflow Center</a></p>
+  <p><a href="/ui/projects/{project.id}/review-export">审核与导出</a></p>
+  <p><a href="/ui/projects/{project.id}/color-review">上色审核</a></p>
+  <p><a href="/ui/projects/{project.id}/clip-compare">片段对比</a></p>
+  <p><a href="/ui/projects/{project.id}/client-review">客户审片</a></p>
+  <p><a href="/ui/projects/{project.id}/errors">错误日志</a></p>
+  <p><a href="/ui/projects/{project.id}/p2-admin">P2 管理</a></p>
+  <p><a href="/ui/projects/{project.id}/ops">运维与 Worker</a></p>
+  <p><a href="/app">打开完整 SPA 工作台</a></p>
 </section>
 """,
         )
@@ -458,13 +459,19 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             "AI Workflow Center",
             f"""
 <header>
+  <p class="kicker">Models</p>
   <h1>AI Workflow Center</h1>
-  <p class="muted">{escape(project.name)}</p>
+  <p class="muted">{escape(project.name)}。API Key 和 ComfyUI 地址在 /app 的「AI / ComfyUI」页填写。</p>
 </header>
-<section class="grid">
-  <div class="card"><h2>AI Providers</h2><p>{len(providers)} providers</p></div>
-  <div class="card"><h2>ComfyUI Instances</h2><p>{len(comfyui_instances)} instances</p></div>
-  <div class="card"><h2>Workflow Templates</h2><p>{len(workflows)} workflows</p></div>
+<section>
+  <table class="data-table">
+    <thead><tr><th>配置</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>AI Providers</td><td>{len(providers)} providers</td></tr>
+      <tr><td>ComfyUI Instances</td><td>{len(comfyui_instances)} instances</td></tr>
+      <tr><td>Workflow Templates</td><td>{len(workflows)} workflows</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )
@@ -480,13 +487,19 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
             "审核与导出",
             f"""
 <header>
+  <p class="kicker">QC</p>
   <h1>审核与导出</h1>
   <p class="muted">{escape(project.name)}</p>
 </header>
-<section class="grid">
-  <div class="card"><h2>Review Comments</h2><p>{len(comments)} comments</p></div>
-  <div class="card"><h2>QC Reports</h2><p>{len(qc_reports)} reports</p></div>
-  <div class="card"><h2>Export Packages</h2><p>{len(exports)} exports</p></div>
+<section>
+  <table class="data-table">
+    <thead><tr><th>对象</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>Review Comments</td><td>{len(comments)} comments</td></tr>
+      <tr><td>QC Reports</td><td>{len(qc_reports)} reports</td></tr>
+      <tr><td>Export Packages</td><td>{len(exports)} exports</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )
@@ -501,11 +514,16 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         return render_page(
             "上色审核",
             f"""
-<header><h1>上色审核</h1><p class="muted">{escape(project.name)}</p></header>
-<section class="grid">
-  <div class="card"><h2>Colorizations</h2><p>{len(colorizations)} versions</p></div>
-  <div class="card"><h2>Local Corrections</h2><p>{len(corrections)} corrections</p></div>
-  <div class="card"><h2>Color Comparisons</h2><p>{len(comparisons)} comparisons</p></div>
+<header><p class="kicker">Paint</p><h1>上色审核</h1><p class="muted">{escape(project.name)}</p></header>
+<section>
+  <table class="data-table">
+    <thead><tr><th>对象</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>Colorizations</td><td>{len(colorizations)} versions</td></tr>
+      <tr><td>Local Corrections</td><td>{len(corrections)} corrections</td></tr>
+      <tr><td>Color Comparisons</td><td>{len(comparisons)} comparisons</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )
@@ -519,10 +537,15 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         return render_page(
             "片段对比",
             f"""
-<header><h1>片段对比</h1><p class="muted">{escape(project.name)}</p></header>
-<section class="grid">
-  <div class="card"><h2>Video Clips</h2><p>{len(clips)} clips</p></div>
-  <div class="card"><h2>A/B Comparisons</h2><p>{len(comparisons)} comparisons</p></div>
+<header><p class="kicker">Editorial</p><h1>片段对比</h1><p class="muted">{escape(project.name)}</p></header>
+<section>
+  <table class="data-table">
+    <thead><tr><th>对象</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>Video Clips</td><td>{len(clips)} clips</td></tr>
+      <tr><td>A/B Comparisons</td><td>{len(comparisons)} comparisons</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )
@@ -537,11 +560,16 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         return render_page(
             "客户审片",
             f"""
-<header><h1>客户审片</h1><p class="muted">{escape(project.name)}</p></header>
-<section class="grid">
-  <div class="card"><h2>Review Packages</h2><p>{len(packages)} packages</p></div>
-  <div class="card"><h2>Revision Requests</h2><p>{len(revisions)} requests</p></div>
-  <div class="card"><h2>Acceptance Records</h2><p>{len(acceptances)} records</p></div>
+<header><p class="kicker">Delivery</p><h1>客户审片</h1><p class="muted">{escape(project.name)}</p></header>
+<section>
+  <table class="data-table">
+    <thead><tr><th>对象</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>Review Packages</td><td>{len(packages)} packages</td></tr>
+      <tr><td>Revision Requests</td><td>{len(revisions)} requests</td></tr>
+      <tr><td>Acceptance Records</td><td>{len(acceptances)} records</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )
@@ -554,9 +582,14 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         return render_page(
             "错误日志",
             f"""
-<header><h1>错误日志</h1><p class="muted">{escape(project.name)}</p></header>
-<section class="grid">
-  <div class="card"><h2>Error Logs</h2><p>{len(errors)} logs</p></div>
+<header><p class="kicker">Inbox</p><h1>错误日志</h1><p class="muted">{escape(project.name)}</p></header>
+<section>
+  <table class="data-table">
+    <thead><tr><th>对象</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>Error Logs</td><td>{len(errors)} logs</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )
@@ -572,12 +605,17 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         return render_page(
             "P2 管理",
             f"""
-<header><h1>P2 管理</h1><p class="muted">{escape(project.name)}</p></header>
-<section class="grid">
-  <div class="card"><h2>Private Deployments</h2><p>{len(private_configs)} configs</p></div>
-  <div class="card"><h2>Cloud ComfyUI Pools</h2><p>{len(cloud_pools)} pools</p></div>
-  <div class="card"><h2>Model Training Jobs</h2><p>{len(training_jobs)} jobs</p></div>
-  <div class="card"><h2>Advanced Exports</h2><p>{len(advanced_exports)} packages</p></div>
+<header><p class="kicker">Private</p><h1>P2 管理</h1><p class="muted">{escape(project.name)}</p></header>
+<section>
+  <table class="data-table">
+    <thead><tr><th>对象</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>Private Deployments</td><td>{len(private_configs)} configs</td></tr>
+      <tr><td>Cloud ComfyUI Pools</td><td>{len(cloud_pools)} pools</td></tr>
+      <tr><td>Model Training Jobs</td><td>{len(training_jobs)} jobs</td></tr>
+      <tr><td>Advanced Exports</td><td>{len(advanced_exports)} packages</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )
@@ -591,11 +629,16 @@ def create_app(database_url: str | None = None, secret_key: str | None = None, s
         return render_page(
             "运维与 Worker",
             f"""
-<header><h1>运维与 Worker</h1><p class="muted">{escape(project.name)}</p></header>
-<section class="grid">
-  <div class="card"><h2>AI Jobs</h2><p>{len(jobs)} jobs</p></div>
-  <div class="card"><h2>Audit Events</h2><p>{len(audit_events)} events</p></div>
-  <div class="card"><h2>Worker Mode</h2><p>local synchronous worker</p></div>
+<header><p class="kicker">Runtime</p><h1>运维与 Worker</h1><p class="muted">{escape(project.name)}</p></header>
+<section>
+  <table class="data-table">
+    <thead><tr><th>对象</th><th>数量</th></tr></thead>
+    <tbody>
+      <tr><td>AI Jobs</td><td>{len(jobs)} jobs</td></tr>
+      <tr><td>Audit Events</td><td>{len(audit_events)} events</td></tr>
+      <tr><td>Worker Mode</td><td>local synchronous worker</td></tr>
+    </tbody>
+  </table>
 </section>
 """,
         )

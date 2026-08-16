@@ -3,38 +3,73 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>mangedong Web Workbench</title>
+    <title>mangedong 生产工作台</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <main id="app" data-testid="workbench-root">
-      <aside class="sidebar">
-        <h1>mangedong</h1>
-        <button data-route="auth">登录</button>
-        <button data-route="dashboard">Dashboard</button>
-        <button data-route="pipeline">链路向导</button>
-        <button data-route="production">生产工作台</button>
-        <button data-route="import">漫画导入</button>
-        <button data-route="color">上色生产</button>
-        <button data-route="timeline">Shot / Timeline</button>
-        <button data-route="audio">音频字幕</button>
-        <button data-route="resources">资源浏览</button>
-        <button data-route="ai">AI / ComfyUI</button>
-        <button data-route="review">审核导出</button>
-        <button data-route="delivery">质量交付</button>
-        <button data-route="reports">报表</button>
-        <button data-route="compliance">合规下载</button>
-        <button data-route="p2">P2 管理</button>
-        <button data-route="ops">运维/Worker</button>
-        <button data-route="notifications">通知</button>
-        <button data-route="help">帮助</button>
-        <button data-route="settings">设置</button>
-      </aside>
-      <section class="workspace">
-        <div id="status" class="status">Ready</div>
+    <main id="app" data-testid="workbench-root" data-mode="auth">
+      <header class="topbar">
+        <a class="brand" href="/app">
+          <span class="brand-mark">MD</span>
+          <span class="brand-name">mangedong</span>
+        </a>
+        <div class="context-strip" aria-label="studio-context">
+          <span class="context-chip" id="team-chip">团队未选择</span>
+          <span class="context-chip" id="project-chip">项目未选择</span>
+        </div>
+        <button type="button" class="ghost" id="open-palette" title="打开命令盘">
+          搜索模块
+          <kbd>K</kbd>
+        </button>
+        <button type="button" class="topbar-cta" data-route="ai">配置 AI Key / ComfyUI</button>
+        <p id="status" class="status" role="status">Ready</p>
+      </header>
+
+      <nav class="rail" aria-label="primary">
+        <p class="nav-label">生产</p>
+        <button type="button" data-route="dashboard">Dashboard</button>
+        <button type="button" data-route="pipeline">链路向导</button>
+        <button type="button" data-route="production">生产工作台</button>
+        <button type="button" data-route="import">漫画导入</button>
+        <button type="button" data-route="color">上色生产</button>
+        <button type="button" data-route="timeline">Shot / Timeline</button>
+        <button type="button" data-route="audio">音频字幕</button>
+
+        <p class="nav-label">交付</p>
+        <button type="button" data-route="review">审核导出</button>
+        <button type="button" data-route="delivery">质量交付</button>
+        <button type="button" data-route="compliance">合规下载</button>
+        <button type="button" data-route="resources">资源浏览</button>
+
+        <p class="nav-label">系统</p>
+        <button type="button" class="nav-hot" data-route="ai">AI / ComfyUI</button>
+        <button type="button" data-route="reports">报表</button>
+        <button type="button" data-route="ops">运维/Worker</button>
+        <button type="button" data-route="p2">P2 管理</button>
+        <button type="button" data-route="notifications">通知</button>
+        <button type="button" data-route="settings">设置</button>
+        <button type="button" data-route="help">帮助</button>
+        <button type="button" data-route="auth">登录</button>
+      </nav>
+
+      <section class="canvas">
+        <aside id="setup-banner" class="setup-banner" hidden>
+          <div>
+            <strong>模型还没接上。</strong>
+            第三方 API Key 和 ComfyUI 地址都在「AI / ComfyUI」这一页填写，不在设置里。
+          </div>
+          <button type="button" class="primary" data-route="ai">去填写</button>
+        </aside>
         <div id="view"></div>
         <section id="status-history" class="status-history" aria-label="status-history"></section>
       </section>
+
+      <dialog id="command-palette" class="palette">
+        <form id="palette-form" method="dialog">
+          <input id="palette-input" type="search" placeholder="跳转到模块，例如 导入、上色、ComfyUI" autocomplete="off" />
+        </form>
+        <ul id="palette-results"></ul>
+      </dialog>
     </main>
     <script src="/static/workbench.js"></script>
   </body>
