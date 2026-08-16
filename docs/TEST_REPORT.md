@@ -4,7 +4,7 @@
 
 - 运行命令：`python3 -m pytest`
 - 测试范围：CLI 管道、Web SaaS API、Web 工作台页面
-- 测试结果：16 passed
+- 测试结果：19 passed
 
 ## 自动化测试覆盖
 
@@ -87,6 +87,24 @@
 - 前端脚本包含 AI Provider API Key 配置表单
 - 前端脚本包含 ComfyUI 地址、Token、Header、并发配置表单
 - 前端脚本包含 Workflow JSON 上传解析表单
+- 前端脚本包含忘记密码、接受邀请、立项向导、ComfyUI 健康检查、Worker tick、审片播放器
+
+### 8. V1 收口测试
+
+文件：`tests/test_completion.py`
+
+覆盖内容：
+
+- 邀请未注册用户并返回 invite_token
+- 接受邀请后用新密码登录
+- 忘记密码 / 重置密码
+- PATCH 项目名称和状态
+- `/ops/worker/tick` 领取 queued 任务并成功
+- 内存 SQLite 下 worker 为 disabled
+- API Key 加密 roundtrip
+- ComfyUI 健康检查在不可达时标记 fallback
+- 上色 PNG 和视频 MP4 可通过 `/resources/{id}/file` 读取
+- Animatic 写出真实本地 MP4
 
 ### 4. PRD P0 完整链路测试
 
@@ -186,18 +204,8 @@
 ## 最近一次测试输出
 
 ```text
-collected 15 items
-
-tests/test_api.py ....                                                   [ 26%]
-tests/test_enhancements.py .                                             [ 33%]
-tests/test_p1_p2.py .                                                    [ 40%]
-tests/test_pages.py ...                                                  [ 60%]
-tests/test_pipeline.py ...                                               [ 80%]
-tests/test_prd_flow.py .                                                 [ 86%]
-tests/test_human_flow.py .                                               [  xx%]
-tests/test_worker.py ..                                                  [100%]
-
-16 passed
+...................                                                      [100%]
+19 passed in 6.75s
 ```
 
 ## 当前测试结论
@@ -211,6 +219,7 @@ tests/test_worker.py ..                                                  [100%]
 - 外部接入使用 mock，但内部功能会生成真实本地产物文件。
 - 既有漫画转动漫 CLI 管道未出现回归。
 - 当前测试不只是接口测试，已包含对应 Web 页面渲染自动化测试。
+- 邀请、重置密码、worker tick、密钥加密、ComfyUI fallback、资源文件播放通过 `tests/test_completion.py`。
 
 ## 后续测试建议
 
