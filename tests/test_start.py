@@ -13,19 +13,24 @@ def test_start_script_is_executable_and_dry_run() -> None:
     assert script.is_file()
     mode = script.stat().st_mode
     assert mode & stat.S_IXUSR
-    text = script.read_text(encoding="utf-8")
-    assert "mangedong.api.app:create_app" in text
-    assert "--factory" in text
     result = subprocess.run(["bash", str(script), "--dry-run"], check=True, capture_output=True, text=True, cwd=ROOT)
     assert "http://127.0.0.1:8000/app" in result.stdout
     assert "create_app" in result.stdout
 
 
-def test_start_script_respects_port_and_env_file(tmp_path: Path) -> None:
-    script = ROOT / "start.sh"
+def test_start_py_respects_port() -> None:
     env = {**os.environ, "MANGEDONG_PORT": "8011"}
-    result = subprocess.run(["bash", str(script), "--dry-run"], check=True, capture_output=True, text=True, cwd=ROOT, env=env)
+    result = subprocess.run(["python3", str(ROOT / "start.py"), "--dry-run"], check=True, capture_output=True, text=True, cwd=ROOT, env=env)
     assert "http://127.0.0.1:8011/app" in result.stdout
+
+
+def test_windows_cmd_wrapper_is_crlf_and_delegates() -> None:
+    raw = (ROOT / "start.cmd").read_bytes()
+    assert b"start.py" in raw
+    assert b"\r\n" in raw
+    assert b"python start.py" in raw
+    # CMD requires CRLF; LF-only files eat command letters on Windows.
+    assert raw.count(b"\n") == raw.count(b"\r\n")
 
 
 def test_cli_serve_help() -> None:
