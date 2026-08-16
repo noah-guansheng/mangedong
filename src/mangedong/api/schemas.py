@@ -273,6 +273,8 @@ class ComfyUIInstanceCreate(BaseModel):
     name: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
     auth_type: Literal["none", "bearer", "basic", "custom_header"] = "none"
+    token: str | None = None
+    custom_header_name: str | None = None
     max_concurrency: int = Field(default=1, ge=1)
 
 

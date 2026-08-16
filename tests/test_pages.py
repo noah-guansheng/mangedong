@@ -57,6 +57,12 @@ def test_spa_workbench_assets_render(client: TestClient) -> None:
     assert "renderResources" in script.text
     assert "resourceCard" in script.text
     assert "renderAI" in script.text
+    assert "provider-form" in script.text
+    assert "apiKey" in script.text
+    assert "comfyui-form" in script.text
+    assert "baseUrl" in script.text
+    assert "token" in script.text
+    assert "workflow-form" in script.text
     assert "renderDelivery" in script.text
     assert "review-package-form" in script.text
     assert "renderReports" in script.text

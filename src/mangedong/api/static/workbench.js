@@ -420,26 +420,127 @@ function resourceCard(title, items) {
 async function renderAI() {
   await ensureProject();
   view.innerHTML = `
-    <h2>AI / ComfyUI</h2>
+    <div class="page-heading">
+      <div>
+        <p class="eyebrow">Configuration</p>
+        <h2>AI / ComfyUI 配置</h2>
+      </div>
+      <span class="pill">Mock adapters enabled</span>
+    </div>
     <section class="grid">
-      <button class="primary" id="mock-provider">创建 Mock Provider</button>
-      <button class="primary" id="mock-comfy">配置本地 ComfyUI</button>
-      <button class="primary" id="mock-workflow">创建 Workflow</button>
+      <form id="provider-form" data-testid="provider-form">
+        <h3>第三方 AI Provider</h3>
+        <label>名称 <input name="name" value="OpenAI Compatible" /></label>
+        <label>类型
+          <select name="providerType">
+            <option value="third_party_api">第三方 API</option>
+            <option value="custom_http">自定义 HTTP</option>
+            <option value="local_model">本地模型</option>
+          </select>
+        </label>
+        <label>Base URL <input name="baseUrl" placeholder="https://api.example.com" /></label>
+        <label>API Key <input name="apiKey" type="password" placeholder="sk-..." /></label>
+        <label>模型 <input name="model" placeholder="video-model" /></label>
+        <label>能力 <input name="capabilities" value="analyze,colorize,video_generate,voice_generate" /></label>
+        <button class="primary" type="submit">保存 AI Provider</button>
+      </form>
+      <form id="comfyui-form" data-testid="comfyui-form">
+        <h3>远程 / 本地 ComfyUI</h3>
+        <label>名称 <input name="name" value="Local ComfyUI" /></label>
+        <label>地址 <input name="baseUrl" value="http://127.0.0.1:8188" /></label>
+        <label>鉴权
+          <select name="authType">
+            <option value="none">无</option>
+            <option value="bearer">Bearer Token</option>
+            <option value="basic">Basic</option>
+            <option value="custom_header">自定义 Header</option>
+          </select>
+        </label>
+        <label>Token <input name="token" type="password" /></label>
+        <label>自定义 Header 名称 <input name="customHeaderName" placeholder="X-API-Key" /></label>
+        <label>最大并发 <input name="maxConcurrency" type="number" min="1" value="1" /></label>
+        <button class="primary" type="submit">保存 ComfyUI</button>
+      </form>
+      <form id="workflow-form" data-testid="workflow-form">
+        <h3>Workflow 模板</h3>
+        <label>名称 <input name="name" value="Image to Video Workflow" /></label>
+        <label>类型
+          <select name="workflowType">
+            <option value="image_to_video">图生视频</option>
+            <option value="colorize">上色</option>
+            <option value="first_last_frame_video">首尾帧视频</option>
+            <option value="inpaint">局部重绘</option>
+          </select>
+        </label>
+        <label>Workflow JSON <textarea name="workflowJson">{"1":{"class_type":"Node","inputs":{}}}</textarea></label>
+        <button class="primary" type="submit">上传并解析 Workflow</button>
+      </form>
     </section>
+    <div id="ai-config-result" class="card"></div>
   `;
-  document.getElementById("mock-provider").addEventListener("click", () =>
+  document.getElementById("provider-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/teams/${state.teamId}/ai-providers`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: form.get("name"),
+        provider_type: form.get("providerType"),
+        capabilities: String(form.get("capabilities") || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        config: { base_url: form.get("baseUrl"), api_key: form.get("apiKey"), model: form.get("model") },
+      }),
+    });
+    document.getElementById("ai-config-result").textContent = `AI Provider 已保存：${result.id}`;
+    setStatus("AI Provider 已保存");
+  });
+  document.getElementById("comfyui-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/teams/${state.teamId}/comfyui/instances`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: form.get("name"),
+        base_url: form.get("baseUrl"),
+        auth_type: form.get("authType"),
+        token: form.get("token"),
+        custom_header_name: form.get("customHeaderName"),
+        max_concurrency: Number(form.get("maxConcurrency") || 1),
+      }),
+    });
+    document.getElementById("ai-config-result").textContent = `ComfyUI 已保存：${result.id}`;
+    setStatus("ComfyUI 已保存");
+  });
+  document.getElementById("workflow-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await api(`/projects/${state.projectId}/workflows`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: form.get("name"),
+        workflow_type: form.get("workflowType"),
+        workflow_json: JSON.parse(form.get("workflowJson")),
+        published_parameters: { prompt: { node_id: "1", input: "text" } },
+      }),
+    });
+    document.getElementById("ai-config-result").textContent = `Workflow 已解析：${result.id}`;
+    setStatus("Workflow 已解析");
+  });
+  document.getElementById("mock-provider")?.addEventListener("click", () =>
     api(`/teams/${state.teamId}/ai-providers`, {
       method: "POST",
       body: JSON.stringify({ name: "Mock Provider", provider_type: "third_party_api", capabilities: ["video"] }),
     }).then(() => setStatus("Mock Provider 已创建")),
   );
-  document.getElementById("mock-comfy").addEventListener("click", () =>
+  document.getElementById("mock-comfy")?.addEventListener("click", () =>
     api(`/teams/${state.teamId}/comfyui/instances`, {
       method: "POST",
       body: JSON.stringify({ name: "Local ComfyUI", base_url: "http://127.0.0.1:8188", auth_type: "none" }),
     }).then(() => setStatus("ComfyUI 配置已创建")),
   );
-  document.getElementById("mock-workflow").addEventListener("click", () =>
+  document.getElementById("mock-workflow")?.addEventListener("click", () =>
     api(`/projects/${state.projectId}/workflows`, {
       method: "POST",
       body: JSON.stringify({ name: "Mock Workflow", workflow_type: "image_to_video", workflow_json: { "1": { class_type: "Node" } } }),

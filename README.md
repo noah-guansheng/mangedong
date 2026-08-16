@@ -87,6 +87,11 @@ http://localhost:8000/app
 - 音频字幕
 - 资源浏览
 - AI / ComfyUI
+  - 第三方 AI Provider API Key
+  - Provider Base URL / Model / Capabilities
+  - ComfyUI 地址
+  - ComfyUI Token / Header / 并发
+  - Workflow JSON 上传解析
 - 审核导出
 - 质量交付
 - 报表

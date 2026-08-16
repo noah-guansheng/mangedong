@@ -81,6 +81,9 @@
 - 前端脚本包含下载 token 与 export preflight/freeze 表单
 - 前端脚本包含通知中心、帮助/快捷键页面和状态历史
 - 前端脚本包含键盘快捷键路由
+- 前端脚本包含 AI Provider API Key 配置表单
+- 前端脚本包含 ComfyUI 地址、Token、Header、并发配置表单
+- 前端脚本包含 Workflow JSON 上传解析表单
 
 ### 4. PRD P0 完整链路测试
 
